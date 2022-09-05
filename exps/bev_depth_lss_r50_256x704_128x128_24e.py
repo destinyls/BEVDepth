@@ -1,6 +1,7 @@
 # Copyright (c) Megvii Inc. All rights reserved.
 from argparse import ArgumentParser, Namespace
 
+import os
 import mmcv
 import pytorch_lightning as pl
 import torch
@@ -443,7 +444,9 @@ def main(args: Namespace) -> None:
     model = BEVDepthLightningModel(**vars(args))
     trainer = pl.Trainer.from_argparse_args(args)
     if args.evaluate:
-        trainer.test(model, ckpt_path=args.ckpt_path)
+        for ckpt_name in os.listdir(args.ckpt_path):
+            model_pth = os.path.join(args.ckpt_path, ckpt_name)
+            trainer.test(model, ckpt_path=model_pth)
     else:
         trainer.fit(model)
 

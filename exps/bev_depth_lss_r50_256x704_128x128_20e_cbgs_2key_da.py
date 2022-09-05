@@ -21,6 +21,8 @@ bicycle 0.286   0.457   0.255   0.630   0.194   0.006
 traffic_cone    0.536   0.438   0.339   nan     nan     nan
 barrier 0.559   0.392   0.289   0.124   nan     nan
 """
+import os
+
 from argparse import ArgumentParser, Namespace
 
 import pytorch_lightning as pl
@@ -148,9 +150,12 @@ def main(args: Namespace) -> None:
     model = BEVDepthLightningModel(**vars(args))
     train_dataloader = model.train_dataloader()
     ema_callback = EMACallback(len(train_dataloader.dataset) * args.max_epochs)
-    trainer = pl.Trainer.from_argparse_args(args, callbacks=[ema_callback])
+    trainer = pl.Trainer.from_argparse_args(args)
     if args.evaluate:
-        trainer.test(model, ckpt_path=args.ckpt_path)
+        for ckpt_name in os.listdir(args.ckpt_path):
+            model_pth = os.path.join(args.ckpt_path, ckpt_name)
+            metric = trainer.test(model, ckpt_path=model_pth)
+            print("metric: ", metric)
     else:
         trainer.fit(model)
 
@@ -182,6 +187,7 @@ def run_cli():
                         default_root_dir='./outputs/bev_depth_lss_r50_'
                         '256x704_128x128_20e_cbgs_2key_da')
     args = parser.parse_args()
+    print("args: ", args)
     main(args)
 
 
