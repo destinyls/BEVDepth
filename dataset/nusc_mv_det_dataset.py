@@ -186,6 +186,7 @@ class NuscMVDetDataset(Dataset):
         """
         super().__init__()
         self.infos = mmcv.load(info_path)
+        
         self.is_train = is_train
         self.ida_aug_conf = ida_aug_conf
         self.bda_aug_conf = bda_aug_conf
@@ -328,10 +329,14 @@ class NuscMVDetDataset(Dataset):
                 img = Image.open(
                     os.path.join(self.data_root, cam_info[cam]['filename']))
                 # img = Image.fromarray(img)
-                w, x, y, z = cam_info[cam]['calibrated_sensor']['rotation']
-                # sweep sensor to sweep ego
-                sweepsensor2sweepego_rot = torch.Tensor(
-                    Quaternion(w, x, y, z).rotation_matrix)
+                if "rotation_matrix" in cam_info[cam]['calibrated_sensor'].keys():
+                    sweepsensor2sweepego_rot = torch.Tensor(cam_info[cam]['calibrated_sensor']['rotation_matrix'])
+                else:
+                    w, x, y, z = cam_info[cam]['calibrated_sensor']['rotation']
+                    # sweep sensor to sweep ego
+                    sweepsensor2sweepego_rot = torch.Tensor(
+                        Quaternion(w, x, y, z).rotation_matrix)
+        
                 sweepsensor2sweepego_tran = torch.Tensor(
                     cam_info[cam]['calibrated_sensor']['translation'])
                 sweepsensor2sweepego = sweepsensor2sweepego_rot.new_zeros(

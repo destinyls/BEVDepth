@@ -11,6 +11,7 @@ import torch.utils.data
 import torch.utils.data.distributed
 import torchvision.models as models
 from pytorch_lightning.core import LightningModule
+from pytorch_lightning.callbacks import ModelCheckpoint
 from torch.cuda.amp.autocast_mode import autocast
 from torch.optim.lr_scheduler import MultiStepLR
 
@@ -68,12 +69,8 @@ ida_aug_conf = {
     'rand_flip':
     True,
     'bot_pct_lim': (0.0, 0.0),
-    'cams': [
-        'CAM_FRONT_LEFT', 'CAM_FRONT', 'CAM_FRONT_RIGHT', 'CAM_BACK_LEFT',
-        'CAM_BACK', 'CAM_BACK_RIGHT'
-    ],
-    'Ncams':
-    6,
+    'cams': ['CAM_FRONT'],
+    'Ncams': 1,
 }
 
 bda_aug_conf = {
@@ -188,7 +185,7 @@ class BEVDepthLightningModel(LightningModule):
 
     def __init__(self,
                  gpus: int = 1,
-                 data_root='data/nuScenes',
+                 data_root='data/rope3d',
                  eval_interval=1,
                  batch_size_per_device=8,
                  class_names=CLASSES,
@@ -216,14 +213,14 @@ class BEVDepthLightningModel(LightningModule):
                                             output_dir=self.default_root_dir)
         self.model = BEVDepth(self.backbone_conf,
                               self.head_conf,
-                              is_train_depth=True)
+                              is_train_depth=False)
         self.mode = 'valid'
         self.img_conf = img_conf
         self.data_use_cbgs = False
         self.num_sweeps = 1
         self.sweep_idxes = list()
         self.key_idxes = list()
-        self.data_return_depth = True
+        self.data_return_depth = False
         self.downsample_factor = self.backbone_conf['downsample_factor']
         self.dbound = self.backbone_conf['d_bound']
         self.depth_channels = int(
@@ -233,29 +230,39 @@ class BEVDepthLightningModel(LightningModule):
         return self.model(sweep_imgs, mats)
 
     def training_step(self, batch):
-        (sweep_imgs, mats, _, _, gt_boxes, gt_labels, depth_labels) = batch
+        if len(batch) == 7:
+            (sweep_imgs, mats, _, _, gt_boxes, gt_labels, depth_labels) = batch
+        else:
+            (sweep_imgs, mats, _, _, gt_boxes, gt_labels) = batch
         if torch.cuda.is_available():
             for key, value in mats.items():
                 mats[key] = value.cuda()
             sweep_imgs = sweep_imgs.cuda()
             gt_boxes = [gt_box.cuda() for gt_box in gt_boxes]
             gt_labels = [gt_label.cuda() for gt_label in gt_labels]
-        preds, depth_preds = self(sweep_imgs, mats)
+        if len(batch) == 7:
+            preds, depth_preds = self(sweep_imgs, mats)
+        else:
+            preds = self(sweep_imgs, mats)
         if isinstance(self.model, torch.nn.parallel.DistributedDataParallel):
             targets = self.model.module.get_targets(gt_boxes, gt_labels)
             detection_loss = self.model.module.loss(targets, preds)
         else:
             targets = self.model.get_targets(gt_boxes, gt_labels)
             detection_loss = self.model.loss(targets, preds)
-
-        if len(depth_labels.shape) == 5:
-            # only key-frame will calculate depth loss
-            depth_labels = depth_labels[:, 0, ...]
-        depth_loss = self.get_depth_loss(depth_labels.cuda(), depth_preds)
-        self.log('detection_loss', detection_loss)
-        self.log('depth_loss', depth_loss)
-        return detection_loss + depth_loss
-
+        
+        if len(batch) == 7:
+            if len(depth_labels.shape) == 5:
+                # only key-frame will calculate depth loss
+                depth_labels = depth_labels[:, 0, ...]
+            depth_loss = self.get_depth_loss(depth_labels.cuda(), depth_preds)
+            self.log('detection_loss', detection_loss)
+            self.log('depth_loss', depth_loss)
+            return detection_loss + depth_loss
+        else:
+            self.log('detection_loss', detection_loss)
+            return detection_loss
+            
     def get_depth_loss(self, depth_labels, depth_preds):
         depth_labels = self.get_downsampled_gt_depth(depth_labels)
         depth_preds = depth_preds.permute(0, 2, 3, 1).contiguous().view(
@@ -379,7 +386,7 @@ class BEVDepthLightningModel(LightningModule):
             bda_aug_conf=self.bda_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path='data/nuScenes/nuscenes_12hz_infos_train.pkl',
+            info_path='data/rope3d/rope3d_12hz_infos_train_mini.pkl',
             is_train=True,
             use_cbgs=self.data_use_cbgs,
             img_conf=self.img_conf,
@@ -408,7 +415,7 @@ class BEVDepthLightningModel(LightningModule):
             bda_aug_conf=self.bda_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path='data/nuScenes/nuscenes_12hz_infos_val.pkl',
+            info_path='data/rope3d/rope3d_12hz_infos_val_mini.pkl',
             is_train=False,
             img_conf=self.img_conf,
             num_sweeps=self.num_sweeps,
@@ -440,9 +447,11 @@ class BEVDepthLightningModel(LightningModule):
 def main(args: Namespace) -> None:
     if args.seed is not None:
         pl.seed_everything(args.seed)
-
+    print(args)
+    
     model = BEVDepthLightningModel(**vars(args))
-    trainer = pl.Trainer.from_argparse_args(args)
+    checkpoint_callback = ModelCheckpoint(dirpath='./outputs/bev_depth_lss_r50_256x704_128x128_24e/checkpoints', filename='{epoch}', every_n_epochs=20)
+    trainer = pl.Trainer.from_argparse_args(args, callbacks=[checkpoint_callback])
     if args.evaluate:
         for ckpt_name in os.listdir(args.ckpt_path):
             model_pth = os.path.join(args.ckpt_path, ckpt_name)
@@ -469,7 +478,7 @@ def run_cli():
     parser.set_defaults(
         profiler='simple',
         deterministic=False,
-        max_epochs=24,
+        max_epochs=200,
         accelerator='ddp',
         num_sanity_val_steps=0,
         gradient_clip_val=5,
