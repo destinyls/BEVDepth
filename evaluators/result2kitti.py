@@ -7,6 +7,7 @@ import numpy as np
 
 from tqdm import tqdm
 
+from evaluators.utils import *
 from evaluators.kitti_utils import *
 from evaluators.kitti_utils import kitti_common as kitti
 from evaluators.kitti_utils.eval import kitti_eval
@@ -31,16 +32,32 @@ def get_lidar_3d_8points(obj_size, yaw_lidar, center_lidar):
     corners_3d_lidar = lidar_r * corners_3d_lidar + np.matrix(center_lidar).T
     return corners_3d_lidar.T
 
-def read_label_bboxes(label_path):
-    with open(label_path, "r") as load_f:
-        labels = json.load(load_f)
+def read_label_bboxes(label_path, denorm_file):
+    _, _, Tr_cam2lidar = get_cam2lidar(denorm_file)
+    fieldnames = ['type', 'truncated', 'occluded', 'alpha', 'xmin', 'ymin', 'xmax', 'ymax', 'dh', 'dw',
+                  'dl', 'lx', 'ly', 'lz', 'ry']
     boxes = []
-    for label in labels:
-        obj_size = [label["3d_dimensions"]["l"], label["3d_dimensions"]["w"], label["3d_dimensions"]["h"]]
-        yaw_lidar = label["rotation"]
-        center_lidar = [label["3d_location"]["x"], label["3d_location"]["y"], label["3d_location"]["z"]]
-        box = get_lidar_3d_8points(obj_size, yaw_lidar, center_lidar)
-        boxes.append(box)
+    with open(label_path, 'r') as csv_file:
+        reader = csv.DictReader(csv_file, delimiter=' ', fieldnames=fieldnames)
+        for line, row in enumerate(reader):
+            alpha = float(row["alpha"])
+            pos = np.array((float(row['lx']), float(row['ly']), float(row['lz'])), dtype=np.float32)
+            dim = [float(row['dl']), float(row['dw']), float(row['dh'])]
+            ry = float(row["ry"])
+            if alpha > np.pi:
+                alpha -= 2 * np.pi
+                ry = alpha2roty(alpha, pos)
+            alpha = clip2pi(alpha)
+            ry = clip2pi(ry)
+            yaw_lidar =  0.5 * np.pi - ry
+            if sum(dim) == 0:
+                continue
+            loc_cam = np.array([float(row['lx']), float(row['ly']), float(row['lz']), 1.0]).reshape(4, 1)
+            loc_lidar = np.matmul(Tr_cam2lidar, loc_cam).squeeze(-1)[:3]
+            loc_lidar[2] += 0.5 * float(row['dh'])
+            center_lidar, obj_size = loc_lidar, dim
+            box = get_lidar_3d_8points(obj_size, yaw_lidar, center_lidar)
+            boxes.append(box)
     return boxes
 
 def kitti_evaluation(pred_label_path, gt_label_path, metric_path="metric"):
@@ -104,22 +121,24 @@ def get_camera_3d_8points(obj_size, yaw_lidar, center_lidar, center_in_cam, r_ve
     alpha_arctan = normalize_angle(alpha)
     return alpha_arctan, yaw
 
-def pcd_vis(pcd_path, boxes, save_file="demo.jpg", label_path=None):    
+def pcd_vis(boxes, save_file="demo.jpg", label_path=None):    
     range_list = [(-60, 60), (0, 100), (-2., -2.), 0.1]
     points_filter = PointCloudFilter(side_range=range_list[0], fwd_range=range_list[1], res=range_list[-1])
-    bev_image = points_filter.get_bev_image(pcd_path)
+    bev_image = points_filter.get_meshgrid()
+    bev_image = cv2.merge([bev_image, bev_image, bev_image])
     for n in range(len(boxes)):
         corner_points = boxes[n]
         x_img, y_img = points_filter.pcl2xy_plane(corner_points[:, 0], corner_points[:, 1])
         x_img = x_img[:, 0]
         y_img = y_img[:, 0]
         for i in np.arange(4):
-            cv2.line(bev_image, (int(x_img[0]), int(y_img[0])), (int(x_img[1]), int(y_img[1])), (255,255,0), 2)
-            cv2.line(bev_image, (int(x_img[0]), int(y_img[0])), (int(x_img[3]), int(y_img[3])), (255,255,0), 2)
-            cv2.line(bev_image, (int(x_img[1]), int(y_img[1])), (int(x_img[2]), int(y_img[2])), (255,255,0), 2)
-            cv2.line(bev_image, (int(x_img[2]), int(y_img[2])), (int(x_img[3]), int(y_img[3])), (255,255,0), 2)
+            cv2.line(bev_image, (int(x_img[0]), int(y_img[0])), (int(x_img[1]), int(y_img[1])), (255,0,0), 2)
+            cv2.line(bev_image, (int(x_img[0]), int(y_img[0])), (int(x_img[3]), int(y_img[3])), (255,0,0), 2)
+            cv2.line(bev_image, (int(x_img[1]), int(y_img[1])), (int(x_img[2]), int(y_img[2])), (255,0,0), 2)
+            cv2.line(bev_image, (int(x_img[2]), int(y_img[2])), (int(x_img[3]), int(y_img[3])), (255,0,0), 2)
     if label_path is not None:
-        boxes = read_label_bboxes(label_path)
+        denorm_file = label_path.replace("label_2", "denorm")
+        boxes = read_label_bboxes(label_path, denorm_file)
         for n in range(len(boxes)):
             corner_points = boxes[n]
             x_img, y_img = points_filter.pcl2xy_plane(corner_points[:, 0], corner_points[:, 1])
@@ -150,7 +169,7 @@ def bbbox2bbox(box3d, Tr_velo_to_cam, camera_intrinsic, img_size=[1920, 1080]):
     box2d[3] = min(box2d[3], img_size[1])
     return box2d
     
-def result2kitti(results_file, results_path, dair_root, demo=False):
+def result2kitti(results_file, results_path, dair_root, demo=True):
     with open(results_file,'r',encoding='utf8')as fp:
         results = json.load(fp)["results"]
     with open("data/rope3d-kitti/ImageSets/train.json") as fp:
@@ -182,6 +201,8 @@ def result2kitti(results_file, results_path, dair_root, demo=False):
             yaw_lidar = math.acos(Rm_matrix[0,0])
             if Rm_matrix[1,0] < 0:
                 yaw_lidar = -1 * yaw_lidar
+            yaw_lidar =  -0.5 * np.pi + yaw_lidar
+            
             detection_score = pred["detection_score"]
             class_name = pred["detection_name"]
             
@@ -218,10 +239,10 @@ def result2kitti(results_file, results_path, dair_root, demo=False):
         write_kitti_in_txt(pred_lines, os.path.join(results_path, "data", "{:06d}".format(sample_id) + ".txt"))       
         if demo:
             os.makedirs(os.path.join(results_path, "demo"), exist_ok=True)
-            pcd_path = os.path.join(dair_root, "velodyne", "{:06d}".format(sample_id) + ".pcd")
-            label_path = os.path.join(dair_root, "label/camera", "{:06d}".format(sample_id) + ".json")
+            # pcd_path = os.path.join(dair_root, "velodyne", "{:06d}".format(sample_id) + ".pcd")
+            label_path = os.path.join("data/rope3d-kitti", "training", "label_2", "{:06d}".format(sample_id) + ".txt")
             demo_file = os.path.join(results_path, "demo", "{:06d}".format(sample_id) + ".jpg")
-            pcd_vis(pcd_path, bboxes, demo_file, label_path)
+            pcd_vis(bboxes, demo_file, label_path)
     return os.path.join(results_path, "data")
 
 if __name__ == "__main__":

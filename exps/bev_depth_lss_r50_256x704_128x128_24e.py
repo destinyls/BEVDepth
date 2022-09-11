@@ -28,10 +28,10 @@ img_conf = dict(img_mean=[123.675, 116.28, 103.53],
                 to_rgb=True)
 
 backbone_conf = {
-    'x_bound': [-51.2, 51.2, 0.8],
+    'x_bound': [0, 102.4, 0.8],
     'y_bound': [-51.2, 51.2, 0.8],
     'z_bound': [-5, 3, 8],
-    'd_bound': [2.0, 58.0, 0.5],
+    'd_bound': [2.0, 114.0, 0.5],
     'final_dim':
     final_dim,
     'output_channels':
@@ -127,17 +127,17 @@ common_heads = dict(reg=(2, 2),
 
 bbox_coder = dict(
     type='CenterPointBBoxCoder',
-    post_center_range=[-61.2, -61.2, -10.0, 61.2, 61.2, 10.0],
+    post_center_range=[0.0, -61.2, -10.0, 122.4, 61.2, 10.0],
     max_num=500,
     score_threshold=0.1,
     out_size_factor=4,
     voxel_size=[0.2, 0.2, 8],
-    pc_range=[-51.2, -51.2, -5, 51.2, 51.2, 3],
+    pc_range=[0, -51.2, -5, 104.4, 51.2, 3],
     code_size=9,
 )
 
 train_cfg = dict(
-    point_cloud_range=[-51.2, -51.2, -5, 51.2, 51.2, 3],
+    point_cloud_range=[0, -51.2, -5, 102.4, 51.2, 3],
     grid_size=[512, 512, 1],
     voxel_size=[0.2, 0.2, 8],
     out_size_factor=4,
@@ -149,7 +149,7 @@ train_cfg = dict(
 )
 
 test_cfg = dict(
-    post_center_limit_range=[-61.2, -61.2, -10.0, 61.2, 61.2, 10.0],
+    post_center_limit_range=[0.0, -61.2, -10.0, 122.4, 61.2, 10.0],
     max_per_img=500,
     max_pool_nms=False,
     min_radius=[4, 12, 10, 1, 0.85, 0.175],
@@ -185,7 +185,7 @@ class BEVDepthLightningModel(LightningModule):
 
     def __init__(self,
                  gpus: int = 1,
-                 data_root='data/rope3d',
+                 data_root='data/nuScenes',
                  eval_interval=1,
                  batch_size_per_device=8,
                  class_names=CLASSES,
@@ -386,7 +386,7 @@ class BEVDepthLightningModel(LightningModule):
             bda_aug_conf=self.bda_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path='data/rope3d/rope3d_12hz_infos_train_mini.pkl',
+            info_path='data/nuScenes/nuscenes_12hz_infos_train.pkl',
             is_train=True,
             use_cbgs=self.data_use_cbgs,
             img_conf=self.img_conf,
@@ -415,7 +415,7 @@ class BEVDepthLightningModel(LightningModule):
             bda_aug_conf=self.bda_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path='data/rope3d/rope3d_12hz_infos_val_mini.pkl',
+            info_path='data/nuScenes/nuscenes_12hz_infos_train.pkl',
             is_train=False,
             img_conf=self.img_conf,
             num_sweeps=self.num_sweeps,

@@ -175,9 +175,7 @@ def generate_info_rope3d(rope3d_root, split='train', img_id=0):
             camera_intrinsic = load_calib(calib_file)
             cam2lidar, translation, Tr_cam2lidar = get_cam2lidar(denorm_file)
             
-            rot =  Quaternion(matrix=cam2lidar)
-            rotation = [rot[0], rot[1], rot[2], rot[3]]
-            calibrated_sensor = {"token": index, "sensor_token": index, "translation": translation, "rotation": rotation, "rotation_matrix": cam2lidar, "camera_intrinsic": camera_intrinsic}
+            calibrated_sensor = {"token": index, "sensor_token": index, "translation": translation, "rotation_matrix": cam2lidar, "camera_intrinsic": camera_intrinsic}
             cam_info['calibrated_sensor'] = calibrated_sensor
             cam_infos[cam_name] = cam_info
             
@@ -220,7 +218,7 @@ def generate_info_rope3d(rope3d_root, split='train', img_id=0):
 
 def main():
     rope3d_root = "data/rope3d"
-    train_infos = generate_info_rope3d(rope3d_root, split='train')
+    # train_infos = generate_info_rope3d(rope3d_root, split='train')
     # val_infos = generate_info_rope3d(rope3d_root, split='val')
     
     train_infos = mmcv.load("./data/rope3d/rope3d_12hz_infos_train.pkl")
@@ -228,7 +226,7 @@ def main():
     print("train_infos: ", len(train_infos))
     print("val_infos: ", len(val_infos))
     train_infos = random.sample(train_infos, 2333)
-    val_infos = random.sample(val_infos, 2333)
+    val_infos = random.sample(val_infos, 1000)
     
     mmcv.dump(train_infos, './data/rope3d/rope3d_12hz_infos_train_mini.pkl')
     mmcv.dump(val_infos, './data/rope3d/rope3d_12hz_infos_val_mini.pkl')
