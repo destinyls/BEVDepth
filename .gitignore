@@ -26,10 +26,12 @@ cmake-build-*/
 # File-based project format
 *.iws
 *.out
+*.jpg
+
 # IntelliJ
 out/
 data/
-
+R40/
 # mpeltonen/sbt-idea plugin
 .idea_modules/
 

@@ -194,20 +194,11 @@ def result2kitti(results_file, results_path, dair_root, demo=True):
         for pred in preds:
             loc = pred["translation"]
             dim = pred["size"]
-            rotation = pred["rotation"]
-            Rq = [rotation[1], rotation[2], rotation[3], rotation[0]]
-            Rm = R.from_quat(Rq)
-            Rm_matrix = Rm.as_matrix()
-            yaw_lidar = math.acos(Rm_matrix[0,0])
-            if Rm_matrix[1,0] < 0:
-                yaw_lidar = -1 * yaw_lidar
-            yaw_lidar =  -0.5 * np.pi + yaw_lidar
-            
+            yaw_lidar = pred["box_yaw"]
             detection_score = pred["detection_score"]
             class_name = pred["detection_name"]
             
-            # w, h, l = dim[0], dim[1], dim[2]
-            l, w, h = dim[0], dim[1], dim[2]
+            w, l, h = dim[0], dim[1], dim[2]
             x, y, z = loc[0], loc[1], loc[2]            
             bottom_center = [x, y, z]
             obj_size = [l, w, h]
@@ -215,8 +206,10 @@ def result2kitti(results_file, results_path, dair_root, demo=True):
             alpha, yaw = get_camera_3d_8points(
                 obj_size, yaw_lidar, bottom_center, bottom_center_in_cam, r_velo2cam, t_velo2cam
             )
-            cam_x, cam_y, cam_z = convert_point(np.array([x, y, z-h/2, 1]).T, Tr_velo_to_cam)
-            box = get_lidar_3d_8points([w, l, h], -yaw_lidar, bottom_center)
+            yaw  = 0.5 * np.pi - yaw_lidar
+
+            cam_x, cam_y, cam_z = convert_point(np.array([x, y, z, 1]).T, Tr_velo_to_cam)
+            box = get_lidar_3d_8points([w, l, h], yaw_lidar, [x, y, z + h/2])
             box2d = bbbox2bbox(box, Tr_velo_to_cam, camera_intrinsic)
             if detection_score > 0.45 and class_name in category_map.keys():
                 i1 = category_map[class_name]

@@ -288,6 +288,7 @@ class DetMVNuscEvaluator():
                     translation=nusc_box.center.tolist(),
                     size=nusc_box.wlh.tolist(),
                     rotation=nusc_box.orientation.elements.tolist(),
+                    box_yaw=box_yaw,
                     velocity=nusc_box.velocity[:2],
                     detection_name=name,
                     detection_score=float(scores[i]),

@@ -12,6 +12,7 @@ import torch.utils.data.distributed
 import torchvision.models as models
 from pytorch_lightning.core import LightningModule
 from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks import Callback
 from torch.cuda.amp.autocast_mode import autocast
 from torch.optim.lr_scheduler import MultiStepLR
 
@@ -20,9 +21,15 @@ from evaluators.det_mv_evaluators import DetMVNuscEvaluator
 from models.bev_depth import BEVDepth
 from utils.torch_dist import all_gather_object, get_rank, synchronize
 
+''''
 H = 900
 W = 1600
 final_dim = (256, 704)
+'''
+H = 1080
+W = 1920
+final_dim = (384, 704)
+
 img_conf = dict(img_mean=[123.675, 116.28, 103.53],
                 img_std=[58.395, 57.12, 57.375],
                 to_rgb=True)
@@ -185,7 +192,7 @@ class BEVDepthLightningModel(LightningModule):
 
     def __init__(self,
                  gpus: int = 1,
-                 data_root='data/nuScenes',
+                 data_root='data/rope3d',
                  eval_interval=1,
                  batch_size_per_device=8,
                  class_names=CLASSES,
@@ -386,7 +393,7 @@ class BEVDepthLightningModel(LightningModule):
             bda_aug_conf=self.bda_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path='data/nuScenes/nuscenes_12hz_infos_train.pkl',
+            info_path='data/rope3d/rope3d_12hz_infos_train_mini.pkl',
             is_train=True,
             use_cbgs=self.data_use_cbgs,
             img_conf=self.img_conf,
@@ -415,7 +422,7 @@ class BEVDepthLightningModel(LightningModule):
             bda_aug_conf=self.bda_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path='data/nuScenes/nuscenes_12hz_infos_train.pkl',
+            info_path='data/rope3d/rope3d_12hz_infos_val_mini.pkl',
             is_train=False,
             img_conf=self.img_conf,
             num_sweeps=self.num_sweeps,
@@ -443,7 +450,6 @@ class BEVDepthLightningModel(LightningModule):
     def add_model_specific_args(parent_parser):  # pragma: no-cover
         return parent_parser
 
-
 def main(args: Namespace) -> None:
     if args.seed is not None:
         pl.seed_everything(args.seed)
@@ -458,8 +464,7 @@ def main(args: Namespace) -> None:
             trainer.test(model, ckpt_path=model_pth)
     else:
         trainer.fit(model)
-
-
+        
 def run_cli():
     parent_parser = ArgumentParser(add_help=False)
     parent_parser = pl.Trainer.add_argparse_args(parent_parser)
@@ -484,11 +489,10 @@ def run_cli():
         gradient_clip_val=5,
         limit_val_batches=0,
         enable_checkpointing=True,
-        precision=16,
+        precision=32,
         default_root_dir='./outputs/bev_depth_lss_r50_256x704_128x128_24e')
     args = parser.parse_args()
     main(args)
-
 
 if __name__ == '__main__':
     run_cli()

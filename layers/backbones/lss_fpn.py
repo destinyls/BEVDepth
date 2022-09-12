@@ -4,6 +4,7 @@ import numpy as np
 
 import torch
 import torch.nn.functional as F
+from mmcv.runner import force_fp32, auto_fp16
 from mmcv.cnn import build_conv_layer
 from mmdet3d.models import build_neck
 from mmdet.models import build_backbone
@@ -324,7 +325,7 @@ class LSSFPN(nn.Module):
         # D x H x W x 3
         frustum = torch.stack((x_coords, y_coords, d_coords, paddings), -1)
         return frustum
-
+    
     def get_geometry(self, sensor2ego_mat, intrin_mat, ida_mat, bda_mat):
         """Transfer points from camera coord to ego coord.
 
