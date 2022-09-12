@@ -81,9 +81,9 @@ ida_aug_conf = {
 }
 
 bda_aug_conf = {
-    'rot_lim': (-22.5, 22.5),
+    'rot_lim': (-10.0, 10.0),
     'scale_lim': (0.95, 1.05),
-    'flip_dx_ratio': 0.5,
+    'flip_dx_ratio': 0.0,
     'flip_dy_ratio': 0.5
 }
 

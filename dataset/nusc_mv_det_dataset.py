@@ -276,7 +276,7 @@ class NuscMVDetDataset(Dataset):
 
     def sample_bda_augmentation(self):
         """Generate bda augmentation values based on bda_config."""
-        if self.is_train and False:
+        if self.is_train:
             rotate_bda = np.random.uniform(*self.bda_aug_conf['rot_lim'])
             scale_bda = np.random.uniform(*self.bda_aug_conf['scale_lim'])
             flip_dx = np.random.uniform() < self.bda_aug_conf['flip_dx_ratio']

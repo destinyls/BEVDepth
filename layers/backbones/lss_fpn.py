@@ -446,13 +446,6 @@ class LSSFPN(nn.Module):
         geom_xyz = ((geom_xyz - (self.voxel_coord - self.voxel_size / 2.0)) /
                     self.voxel_size).int()
         
-        debug_bev = np.zeros((128, 128), dtype=np.uint8)
-        indice = geom_xyz.detach().cpu().numpy()[0,0,...].reshape(-1, 3)
-        u_indice = np.clip(indice[:, 1], 0, 127)
-        v_indice = np.clip(indice[:, 0], 0, 127)
-        debug_bev[u_indice, v_indice] = 255
-        cv2.imwrite("/root/BEVDepth/debug_bev.jpg", debug_bev)
-        
         feature_map = voxel_pooling(geom_xyz, img_feat_with_depth.contiguous(),
                                    self.voxel_num.cuda())
         if is_return_depth:
