@@ -89,7 +89,7 @@ def get_cam2lidar(denorm_file):
     Tr_cam2lidar[:3, 3] = [0, 0, d]
     
     translation = [0, 0, d]
-    return cam2lidar, translation, Tr_cam2lidar
+    return cam2lidar, translation, Tr_cam2lidar, denorm
 
 def get_annos(label_path, Tr_cam2lidar):
     fieldnames = ['type', 'truncated', 'occluded', 'alpha', 'xmin', 'ymin', 'xmax', 'ymax', 'dh', 'dw',
@@ -173,10 +173,11 @@ def generate_info_rope3d(rope3d_root, split='train', img_id=0):
             cam_info['ego_pose'] = ego_pose
             
             camera_intrinsic = load_calib(calib_file)
-            cam2lidar, translation, Tr_cam2lidar = get_cam2lidar(denorm_file)
+            cam2lidar, translation, Tr_cam2lidar, denorm = get_cam2lidar(denorm_file)
             
             calibrated_sensor = {"token": index, "sensor_token": index, "translation": translation, "rotation_matrix": cam2lidar, "camera_intrinsic": camera_intrinsic}
             cam_info['calibrated_sensor'] = calibrated_sensor
+            cam_info['denorm'] = denorm
             cam_infos[cam_name] = cam_info
             
         for lidar_name in lidar_names:
@@ -218,18 +219,26 @@ def generate_info_rope3d(rope3d_root, split='train', img_id=0):
 
 def main():
     rope3d_root = "data/rope3d"
-    # train_infos = generate_info_rope3d(rope3d_root, split='train')
-    # val_infos = generate_info_rope3d(rope3d_root, split='val')
+    train_infos = generate_info_rope3d(rope3d_root, split='train')
+    val_infos = generate_info_rope3d(rope3d_root, split='val')
     
-    train_infos = mmcv.load("./data/rope3d/rope3d_12hz_infos_train.pkl")
-    val_infos = mmcv.load("./data/rope3d/rope3d_12hz_infos_val.pkl")
+    mmcv.dump(train_infos, './data/rope3d/rope3d_12hz_infos_val_hom_mini.pkl')
+    mmcv.dump(val_infos, './data/rope3d/rope3d_12hz_infos_val_mini.pkl')
+    
+    # train_infos = mmcv.load("./data/rope3d/rope3d_12hz_infos_train.pkl")
+    # val_infos = mmcv.load("./data/rope3d/rope3d_12hz_infos_val.pkl")
+
     print("train_infos: ", len(train_infos))
     print("val_infos: ", len(val_infos))
+    random.shuffle(train_infos)
+    random.shuffle(val_infos)
+    
     train_infos = random.sample(train_infos, 2333)
     val_infos = random.sample(val_infos, 1000)
     
-    mmcv.dump(train_infos, './data/rope3d/rope3d_12hz_infos_train_mini.pkl')
-    mmcv.dump(val_infos, './data/rope3d/rope3d_12hz_infos_val_mini.pkl')
+    mmcv.dump(train_infos[:2333], './data/rope3d/rope3d_12hz_infos_train_mini.pkl')
+    mmcv.dump(train_infos[3000:4000], './data/rope3d/rope3d_12hz_infos_val_hom_mini.pkl')
+    mmcv.dump(val_infos[:1000], './data/rope3d/rope3d_12hz_infos_val_mini.pkl')
 
 if __name__ == '__main__':
     main()

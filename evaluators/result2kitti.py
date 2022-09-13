@@ -33,7 +33,7 @@ def get_lidar_3d_8points(obj_size, yaw_lidar, center_lidar):
     return corners_3d_lidar.T
 
 def read_label_bboxes(label_path, denorm_file):
-    _, _, Tr_cam2lidar = get_cam2lidar(denorm_file)
+    _, _, Tr_cam2lidar, _ = get_cam2lidar(denorm_file)
     fieldnames = ['type', 'truncated', 'occluded', 'alpha', 'xmin', 'ymin', 'xmax', 'ymax', 'dh', 'dw',
                   'dl', 'lx', 'ly', 'lz', 'ry']
     boxes = []
@@ -79,7 +79,7 @@ def write_kitti_in_txt(pred_lines, path_txt):
     wf.close()
 
 def get_velo2cam(src_denorm_file):
-    _, _, Tr_cam2lidar = get_cam2lidar(src_denorm_file)
+    _, _, Tr_cam2lidar, _ = get_cam2lidar(src_denorm_file)
     Tr_velo_to_cam = np.linalg.inv(Tr_cam2lidar) 
     r_velo2cam, t_velo2cam = Tr_velo_to_cam[:3, :3], Tr_velo_to_cam[:3, 3]
     t_velo2cam = t_velo2cam.reshape(3, 1)

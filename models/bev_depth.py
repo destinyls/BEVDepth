@@ -63,8 +63,8 @@ class BEVDepth(nn.Module):
             return preds, depth_pred
         else:
             x = self.backbone(x, mats_dict, timestamps)
-            demo_f = torch.sum(x[0], dim=0)
-            cv2.imwrite("/root/BEVDepth/demo.jpg", demo_f.detach().cpu().numpy()*2550)
+            # demo_f = torch.sum(x[0], dim=0)
+            # cv2.imwrite("/root/BEVDepth/demo.jpg", demo_f.detach().cpu().numpy()*2550)
             preds = self.head(x)
             return preds
 

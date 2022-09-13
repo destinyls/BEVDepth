@@ -200,7 +200,7 @@ class BEVDepthLightningModel(LightningModule):
                  head_conf=head_conf,
                  ida_aug_conf=ida_aug_conf,
                  bda_aug_conf=bda_aug_conf,
-                 default_root_dir='./outputs/',
+                 default_root_dir='outputs/',
                  **kwargs):
         super().__init__()
         self.save_hyperparameters()
@@ -422,7 +422,7 @@ class BEVDepthLightningModel(LightningModule):
             bda_aug_conf=self.bda_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path='data/rope3d/rope3d_12hz_infos_val_mini.pkl',
+            info_path='data/rope3d/rope3d_12hz_infos_train__mini.pkl',
             is_train=False,
             img_conf=self.img_conf,
             num_sweeps=self.num_sweeps,
@@ -483,7 +483,7 @@ def run_cli():
     parser.set_defaults(
         profiler='simple',
         deterministic=False,
-        max_epochs=200,
+        max_epochs=500,
         accelerator='ddp',
         num_sanity_val_steps=0,
         gradient_clip_val=5,

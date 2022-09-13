@@ -249,7 +249,7 @@ class NuscMVDetDataset(Dataset):
         """Generate ida augmentation values based on ida_config."""
         H, W = self.ida_aug_conf['H'], self.ida_aug_conf['W']
         fH, fW = self.ida_aug_conf['final_dim']
-        if self.is_train:
+        if self.is_train and False:
             resize = np.random.uniform(*self.ida_aug_conf['resize_lim'])
             resize_dims = (int(W * resize), int(H * resize))
             newW, newH = resize_dims
@@ -276,7 +276,7 @@ class NuscMVDetDataset(Dataset):
 
     def sample_bda_augmentation(self):
         """Generate bda augmentation values based on bda_config."""
-        if self.is_train:
+        if self.is_train and False:
             rotate_bda = np.random.uniform(*self.bda_aug_conf['rot_lim'])
             scale_bda = np.random.uniform(*self.bda_aug_conf['scale_lim'])
             flip_dx = np.random.uniform() < self.bda_aug_conf['flip_dx_ratio']
@@ -312,6 +312,7 @@ class NuscMVDetDataset(Dataset):
         sweep_ida_mats = list()
         sweep_sensor2sensor_mats = list()
         sweep_timestamps = list()
+        sweep_reference_heights = list()
         gt_depth = list()
         for cam in cams:
             imgs = list()
@@ -319,6 +320,7 @@ class NuscMVDetDataset(Dataset):
             intrin_mats = list()
             ida_mats = list()
             sensor2sensor_mats = list()
+            reference_heights = list()
             timestamps = list()
             key_info = cam_infos[0]
             resize, resize_dims, crop, flip, \
