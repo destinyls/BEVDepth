@@ -38,7 +38,7 @@ backbone_conf = {
     'x_bound': [0, 102.4, 0.8],
     'y_bound': [-51.2, 51.2, 0.8],
     'z_bound': [-5, 3, 8],
-    'd_bound': [2.0, 114.0, 0.5],
+    'd_bound': [-0.5, 2.5, 0.1],
     'final_dim':
     final_dim,
     'output_channels':
@@ -422,7 +422,7 @@ class BEVDepthLightningModel(LightningModule):
             bda_aug_conf=self.bda_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path='data/rope3d/rope3d_12hz_infos_train__mini.pkl',
+            info_path='data/rope3d/rope3d_12hz_infos_train_mini.pkl',
             is_train=False,
             img_conf=self.img_conf,
             num_sweeps=self.num_sweeps,
