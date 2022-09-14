@@ -97,6 +97,7 @@ def worker(info):
             points.copy(), img, lidar_calibrated_sensor.copy(),
             lidar_ego_pose.copy(), cam_calibrated_sensor, cam_ego_pose)
         file_name = os.path.split(info['cam_infos'][cam_key]['filename'])[-1]
+        print("pts_img: ", pts_img.shape)
         np.concatenate([pts_img[:2, :].T, depth[:, None]],
                        axis=1).astype(np.float32).flatten().tofile(
                            os.path.join(data_root, 'depth_gt',
