@@ -326,7 +326,38 @@ class LSSFPN(nn.Module):
         frustum = torch.stack((x_coords, y_coords, d_coords, paddings), -1)
         return frustum
     
-    def get_geometry(self, sensor2ego_mat, intrin_mat, ida_mat, bda_mat):
+    def height2localtion(self, points, sensor2ego_mat, sensor2virtual_mat, intrin_mat, reference_heights):
+        batch_size, num_cams, _, _ = sensor2ego_mat.shape
+        reference_heights = reference_heights.view(batch_size, num_cams, 1, 1, 1, 1,
+                                                   1).repeat(1, 1, points.shape[2], points.shape[3], points.shape[4], 1, 1)
+        height = points[:, :, :, :, :, 2, :] + reference_heights[:, :, :, :, :, 0, :]
+        points_const = points.clone()
+        points_const[:, :, :, :, :, 2, :] = 10
+        points_const = torch.cat(
+            (points_const[:, :, :, :, :, :2] * points_const[:, :, :, :, :, 2:3],
+             points_const[:, :, :, :, :, 2:]), 5)
+        combine_virtual = sensor2virtual_mat.matmul(torch.inverse(intrin_mat))
+        points_virtual = combine_virtual.view(batch_size, num_cams, 1, 1, 1, 4, 4).matmul(points_const)
+        ratio = height[:, :, :, :, :, 0] / points_virtual[:, :, :, :, :, 1, 0]
+        ratio = ratio.view(batch_size, num_cams, ratio.shape[2], ratio.shape[3], ratio.shape[4], 1, 1).repeat(1, 1, 1, 1, 1, 4, 1)
+        points = points_virtual * ratio
+        points[:, :, :, :, :, 3, :] = 1
+        combine_ego = sensor2ego_mat.matmul(torch.inverse(sensor2virtual_mat))
+        points = combine_ego.view(batch_size, num_cams, 1, 1, 1, 4,
+                              4).matmul(points)
+        return points
+        
+    def depth2location(self, points, sensor2ego_mat, intrin_mat):
+        batch_size, num_cams, _, _ = sensor2ego_mat.shape
+        points = torch.cat(
+            (points[:, :, :, :, :, :2] * points[:, :, :, :, :, 2:3],
+             points[:, :, :, :, :, 2:]), 5)
+        combine = sensor2ego_mat.matmul(torch.inverse(intrin_mat))
+        points = combine.view(batch_size, num_cams, 1, 1, 1, 4,
+                              4).matmul(points)
+        return points
+    
+    def get_geometry(self, sensor2ego_mat, sensor2virtual_mat, intrin_mat, ida_mat, reference_heights, bda_mat):
         """Transfer points from camera coord to ego coord.
 
         Args:
@@ -341,22 +372,14 @@ class LSSFPN(nn.Module):
             Tensors: points ego coord.
         """
         batch_size, num_cams, _, _ = sensor2ego_mat.shape
-
+        
         # undo post-transformation
         # B x N x D x H x W x 3
         points = self.frustum
         ida_mat = ida_mat.view(batch_size, num_cams, 1, 1, 1, 4, 4)
-        points = ida_mat.inverse().matmul(points.unsqueeze(-1))                
-        # cam_to_ego
-        points = torch.cat(
-            (points[:, :, :, :, :, :2] * points[:, :, :, :, :, 2:3],
-             points[:, :, :, :, :, 2:]), 5)
+        points = ida_mat.inverse().matmul(points.unsqueeze(-1))
+        points = self.height2localtion(points, sensor2ego_mat, sensor2virtual_mat, intrin_mat, reference_heights)
         
-        print("points: ", points.shape)
-
-        combine = sensor2ego_mat.matmul(torch.inverse(intrin_mat))
-        points = combine.view(batch_size, num_cams, 1, 1, 1, 4,
-                              4).matmul(points)
         if bda_mat is not None:
             bda_mat = bda_mat.unsqueeze(1).repeat(1, num_cams, 1, 1).view(
                 batch_size, num_cams, 1, 1, 1, 4, 4)
@@ -440,8 +463,10 @@ class LSSFPN(nn.Module):
         
         geom_xyz = self.get_geometry(
             mats_dict['sensor2ego_mats'][:, sweep_index, ...],
+            mats_dict['sensor2virtual_mats'][:, sweep_index, ...],
             mats_dict['intrin_mats'][:, sweep_index, ...],
             mats_dict['ida_mats'][:, sweep_index, ...],
+            mats_dict['reference_heights'][:, sweep_index, ...],
             mats_dict.get('bda_mat', None),
         )
         img_feat_with_depth = img_feat_with_depth.permute(0, 1, 3, 4, 5, 2)

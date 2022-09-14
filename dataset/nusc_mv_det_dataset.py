@@ -1,4 +1,6 @@
 import os
+import math
+import cv2
 
 import mmcv
 import numpy as np
@@ -150,7 +152,6 @@ def depth_transform(cam_depth, resize, resize_dims, crop, flip, rotate):
 
     return torch.Tensor(depth_map)
 
-
 class NuscMVDetDataset(Dataset):
     def __init__(self,
                  ida_aug_conf,
@@ -236,7 +237,6 @@ class NuscMVDetDataset(Dataset):
         }
 
         sample_indices = []
-
         frac = 1.0 / len(self.classes)
         ratios = [frac / v for v in class_distribution.values()]
         for cls_inds, ratio in zip(list(class_sample_idxs.values()), ratios):
@@ -290,7 +290,21 @@ class NuscMVDetDataset(Dataset):
     
     def get_reference_height(self, denorm):
         ref_height = np.abs(denorm[3]) / np.sqrt(denorm[0]**2 + denorm[1]**2 + denorm[2]**2)
-        return ref_height
+        return ref_height.astype(np.float32)
+    
+    def get_sensor2virtual(self, denorm):
+        origin_vector = np.array([0, 1, 0])    
+        target_vector = -1 * np.array([denorm[0], denorm[1], denorm[2]])
+        target_vector_norm = target_vector / np.sqrt(target_vector[0]**2 + target_vector[1]**2 + target_vector[2]**2)       
+        sita = math.acos(np.inner(target_vector_norm, origin_vector))
+        n_vector = np.cross(target_vector_norm, origin_vector) 
+        n_vector = n_vector / np.sqrt(n_vector[0]**2 + n_vector[1]**2 + n_vector[2]**2)
+        n_vector = n_vector.astype(np.float32)
+        rot_mat, _ = cv2.Rodrigues(n_vector * sita)
+        rot_mat = rot_mat.astype(np.float32)
+        sensor2virtual = np.eye(4)
+        sensor2virtual[:3, :3] = rot_mat
+        return sensor2virtual.astype(np.float32)
 
     def get_image(self, cam_infos, cams):
         """Given data and cam_names, return image data needed.
@@ -315,6 +329,7 @@ class NuscMVDetDataset(Dataset):
         sweep_intrin_mats = list()
         sweep_ida_mats = list()
         sweep_sensor2sensor_mats = list()
+        sweep_sensor2virtual_mats = list()
         sweep_timestamps = list()
         sweep_reference_heights = list()
         gt_depth = list()
@@ -324,6 +339,7 @@ class NuscMVDetDataset(Dataset):
             intrin_mats = list()
             ida_mats = list()
             sensor2sensor_mats = list()
+            sensor2virtual_mats=list()
             reference_heights = list()
             timestamps = list()
             key_info = cam_infos[0]
@@ -391,9 +407,11 @@ class NuscMVDetDataset(Dataset):
                     keyego2keysensor @ global2keyego @ sweepego2global
                     @ sweepsensor2sweepego).inverse()
                 sweepsensor2keyego = global2keyego @ sweepego2global @\
-                    sweepsensor2sweepego
+                    sweepsensor2sweepego    
+                sensor2virtual = torch.Tensor(self.get_sensor2virtual(cam_info[cam]['denorm']))
                 sensor2ego_mats.append(sweepsensor2keyego)
                 sensor2sensor_mats.append(keysensor2sweepsensor)
+                sensor2virtual_mats.append(sensor2virtual)
                 intrin_mat = torch.zeros((4, 4))
                 intrin_mat[3, 3] = 1
                 intrin_mat[:3, :3] = torch.Tensor(
@@ -430,6 +448,7 @@ class NuscMVDetDataset(Dataset):
             sweep_intrin_mats.append(torch.stack(intrin_mats))
             sweep_ida_mats.append(torch.stack(ida_mats))
             sweep_sensor2sensor_mats.append(torch.stack(sensor2sensor_mats))
+            sweep_sensor2virtual_mats.append(torch.stack(sensor2virtual_mats))
             sweep_timestamps.append(torch.tensor(timestamps))
             sweep_reference_heights.append(torch.tensor(reference_heights))
         # Get mean pose of all cams.
@@ -449,6 +468,7 @@ class NuscMVDetDataset(Dataset):
             torch.stack(sweep_intrin_mats).permute(1, 0, 2, 3),
             torch.stack(sweep_ida_mats).permute(1, 0, 2, 3),
             torch.stack(sweep_sensor2sensor_mats).permute(1, 0, 2, 3),
+            torch.stack(sweep_sensor2virtual_mats).permute(1, 0, 2, 3),
             torch.stack(sweep_timestamps).permute(1, 0),
             torch.stack(sweep_reference_heights).permute(1, 0),
             img_metas,
@@ -556,10 +576,11 @@ class NuscMVDetDataset(Dataset):
             sweep_intrins,
             sweep_ida_mats,
             sweep_sensor2sensor_mats,
+            sweep_sensor2virtual_mats,
             sweep_timestamps,
             sweep_reference_heights,
             img_metas,
-        ) = image_data_list[:8]
+        ) = image_data_list[:9]
         img_metas['token'] = self.infos[idx]['sample_token']
         if self.is_train:
             gt_boxes, gt_labels = self.get_gt(self.infos[idx], cams)
@@ -581,6 +602,7 @@ class NuscMVDetDataset(Dataset):
             sweep_intrins,
             sweep_ida_mats,
             sweep_sensor2sensor_mats,
+            sweep_sensor2virtual_mats,
             bda_mat,
             sweep_timestamps,
             sweep_reference_heights,
@@ -589,7 +611,7 @@ class NuscMVDetDataset(Dataset):
             gt_labels,
         ]
         if self.return_depth:
-            ret_list.append(image_data_list[8])
+            ret_list.append(image_data_list[9])
         return ret_list
 
     def __str__(self):
@@ -610,6 +632,7 @@ def collate_fn(data, is_return_depth=False):
     intrin_mats_batch = list()
     ida_mats_batch = list()
     sensor2sensor_mats_batch = list()
+    sensor2virtual_mats_batch = list()
     bda_mat_batch = list()
     timestamps_batch = list()
     reference_heights_batch = list()
@@ -624,21 +647,23 @@ def collate_fn(data, is_return_depth=False):
             sweep_intrins,
             sweep_ida_mats,
             sweep_sensor2sensor_mats,
+            sweep_sensor2virtual_mats,
             bda_mat,
             sweep_timestamps,
             sweep_reference_heights,
             img_metas,
             gt_boxes,
             gt_labels,
-        ) = iter_data[:11]
+        ) = iter_data[:12]
         if is_return_depth:
-            gt_depth = iter_data[11]
+            gt_depth = iter_data[12]
             depth_labels_batch.append(gt_depth)
         imgs_batch.append(sweep_imgs)
         sensor2ego_mats_batch.append(sweep_sensor2ego_mats)
         intrin_mats_batch.append(sweep_intrins)
         ida_mats_batch.append(sweep_ida_mats)
         sensor2sensor_mats_batch.append(sweep_sensor2sensor_mats)
+        sensor2virtual_mats_batch.append(sweep_sensor2virtual_mats)
         bda_mat_batch.append(bda_mat)
         timestamps_batch.append(sweep_timestamps)
         reference_heights_batch.append(sweep_reference_heights)
@@ -651,6 +676,7 @@ def collate_fn(data, is_return_depth=False):
     mats_dict['ida_mats'] = torch.stack(ida_mats_batch)
     mats_dict['reference_heights'] = torch.stack(reference_heights_batch)
     mats_dict['sensor2sensor_mats'] = torch.stack(sensor2sensor_mats_batch)
+    mats_dict['sensor2virtual_mats'] = torch.stack(sensor2virtual_mats_batch)
     mats_dict['bda_mat'] = torch.stack(bda_mat_batch)
     ret_list = [
         torch.stack(imgs_batch),
