@@ -79,7 +79,6 @@ cam_keys = [
     'CAM_BACK', 'CAM_BACK_LEFT'
 ]
 
-
 def worker(info):
     lidar_path = info['lidar_infos'][lidar_key]['filename']
     points = np.fromfile(os.path.join(data_root, lidar_path),
@@ -102,8 +101,6 @@ def worker(info):
                        axis=1).astype(np.float32).flatten().tofile(
                            os.path.join(data_root, 'depth_gt',
                                         f'{file_name}.bin'))
-    # plt.savefig(f"{sample_idx}")
-
 
 if __name__ == '__main__':
     po = Pool(24)

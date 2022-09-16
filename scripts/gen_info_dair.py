@@ -1,17 +1,14 @@
 import os
-import csv
 import math
-import random
+import json
 import cv2
 
 import mmcv
 import numpy as np
-from nuscenes.nuscenes import NuScenes
-from nuscenes.utils import splits
 from pyquaternion import Quaternion
 from tqdm import tqdm
 
-from scipy.spatial.transform import Rotation as R
+from scripts.vis_utils import *
 
 name2nuscenceclass = {
     "car": "vehicle.car",
@@ -27,6 +24,46 @@ name2nuscenceclass = {
     "traffic_cone": "movable_object.trafficcone",
 }
 
+def read_json(path_json):
+    with open(path_json, "r") as load_f:
+        my_json = json.load(load_f)
+    return my_json
+
+def get_velo2cam(path):
+    my_json = read_json(path)
+    t_velo2cam = np.array(my_json["translation"])
+    r_velo2cam = np.array(my_json["rotation"])
+    return r_velo2cam, t_velo2cam
+
+def get_P(path):
+    my_json = read_json(path)
+    P = np.array(my_json["cam_K"]).reshape(3,3)
+    return P
+
+def get_annos(path):
+    my_json = read_json(path)
+    gt_names = []
+    gt_boxes = []
+    for item in my_json:
+        gt_names.append(item["type"].lower())
+        x, y, z = float(item["3d_location"]["x"]), float(item["3d_location"]["y"]), float(item["3d_location"]["z"])
+        h, w, l = float(item["3d_dimensions"]["h"]), float(item["3d_dimensions"]["w"]), float(item["3d_dimensions"]["l"])                                                            
+        lidar_yaw = float(item["rotation"])
+        gt_boxes.append([x, y, z, l, w, h, lidar_yaw])
+    gt_boxes = np.array(gt_boxes)
+    return gt_names, gt_boxes
+
+def load_data(dair_root, token):
+    sample_id = token.split('/')[1].split('.')[0]
+    img_pth = os.path.join(dair_root, token)
+    camera_intrinsic_path = os.path.join(dair_root, "calib", "camera_intrinsic", sample_id + ".json")
+    virtuallidar_to_camera_path = os.path.join(dair_root, "calib", "virtuallidar_to_camera", sample_id + ".json")
+    label_path = os.path.join(dair_root, "label", "camera", sample_id + ".json")
+    r_velo2cam, t_velo2cam = get_velo2cam(virtuallidar_to_camera_path)
+    P = get_P(camera_intrinsic_path)
+    gt_names, gt_boxes = get_annos(label_path)
+    return r_velo2cam, t_velo2cam, P, gt_names, gt_boxes, img_pth
+    
 def equation_plane(points): 
     x1, y1, z1 = points[0, 0], points[0, 1], points[0, 2]
     x2, y2, z2 = points[1, 0], points[1, 1], points[1, 2]
@@ -46,32 +83,31 @@ def equation_plane(points):
 def get_denorm(rotation_matrix, translation):
     lidar2cam = np.eye(4)
     lidar2cam[:3, :3] = rotation_matrix
-    lidar2cam[:3, 3] = translation
+    lidar2cam[:3, 3] = translation.flatten()
     ground_points_lidar = np.array([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]])
     ground_points_lidar = np.concatenate((ground_points_lidar, np.ones((ground_points_lidar.shape[0], 1))), axis=1)
     ground_points_cam = np.matmul(lidar2cam, ground_points_lidar.T).T
     denorm = equation_plane(ground_points_cam)
     return denorm
 
-def generate_info_dair(dair_root, split):
-    dair_pkl = os.path.join(dair_root, "dair_v2x_i_infos_temporal_{}.pkl".format(split))
-    dair_infos = mmcv.load(dair_pkl)
-    
+def generate_info_dair(dair_root, split):    
+    infos = mmcv.load("scripts/single-infrastructure-split-data.json")
+    split_list = infos[split]
     infos = list()
-    for dair_info in tqdm(dair_infos["infos"]):
+    for sample_id in tqdm(split_list):
+        token = "image/" + sample_id + ".jpg"
+        r_velo2cam, t_velo2cam, camera_intrinsic, gt_names, gt_boxes, img_pth = load_data(dair_root, token)
+
         info = dict()
         cam_info = dict()
-        info['sample_token'] = dair_info["token"]
-        info['timestamp'] = dair_info["timestamp"]
-        info['scene_token'] = dair_info["scene_token"]
-        
+        info['sample_token'] = token
+        info['timestamp'] = 1000000
+        info['scene_token'] = token
         cam_names = ['CAM_FRONT']
         lidar_names = ['LIDAR_TOP']
         cam_infos, lidar_infos = dict(), dict()
-        token = dair_info["token"]
         for cam_name in cam_names:
             cam_info = dict()
-            token = dair_info["cams"][cam_name]["sample_data_token"]
             cam_info['sample_token'] = token
             cam_info['timestamp'] = 1000000
             cam_info['is_key_frame'] = True
@@ -81,30 +117,26 @@ def generate_info_dair(dair_root, split):
             ego_pose = {"translation": [0.0, 0.0, 0.0], "rotation": [1.0, 0.0, 0.0, 0.0], "token": token, "timestamp": 1000000}
             cam_info['ego_pose'] = ego_pose
             
-            camera_intrinsic = dair_info["cams"][cam_name]["cam_intrinsic"]
-            translation = dair_info["cams"][cam_name]["sensor2lidar_translation"]
-            rotation_matrix = dair_info["cams"][cam_name]["sensor2lidar_rotation"]
-            denorm = get_denorm(rotation_matrix, translation)
-            calibrated_sensor = {"token": token, "sensor_token": token, "translation": translation, "rotation_matrix": rotation_matrix, "camera_intrinsic": camera_intrinsic}
+            denorm = get_denorm(r_velo2cam, t_velo2cam)
+            calibrated_sensor = {"token": token, "sensor_token": token, "translation": t_velo2cam.flatten(), "rotation_matrix": r_velo2cam, "camera_intrinsic": camera_intrinsic}
             cam_info['calibrated_sensor'] = calibrated_sensor
             cam_info['denorm'] = denorm
             cam_infos[cam_name] = cam_info
-            
+                        
         for lidar_name in lidar_names:
             lidar_info = dict()
             lidar_info['sample_token'] = token
             ego_pose = {"translation": [0.0, 0.0, 0.0], "rotation": [1.0, 0.0, 0.0, 0.0], "token": token, "timestamp": 1000000}
             lidar_info['ego_pose'] = ego_pose
             lidar_info['timestamp'] = 1000000
-            lidar_info['filename'] = "velodyne/" + dair_info["lidar_path"].split('/')[-1]
+            lidar_info['filename'] = "velodyne/" + sample_id + ".pcd"
             lidar_info['calibrated_sensor'] = calibrated_sensor
             lidar_infos[lidar_name] = lidar_info            
         info['cam_infos'] = cam_infos
         info['lidar_infos'] = lidar_infos
         info['sweeps'] = list()
-        gt_boxes = dair_info["gt_boxes"]
-        gt_names = dair_info["gt_names"]
         
+        # demo(img_pth, gt_boxes, r_velo2cam, t_velo2cam, camera_intrinsic)   
         ann_infos = list()
         for idx in range(gt_boxes.shape[0]):
             category_name = gt_names[idx]
@@ -122,6 +154,7 @@ def generate_info_dair(dair_root, split):
             ann_info["category_name"] = name2nuscenceclass[category_name]
             ann_info["translation"] = loc
             ann_info["rotation"] = rotation
+            ann_info["yaw_lidar"] = yaw_lidar
             ann_info["size"] = lwh
             ann_info["prev"] = ""
             ann_info["next"] = ""
@@ -133,6 +166,7 @@ def generate_info_dair(dair_root, split):
             ann_info["num_radar_pts"] = 0            
             ann_info['velocity'] = np.zeros(3)
             ann_infos.append(ann_info)
+            
         info['ann_infos'] = ann_infos
         infos.append(info)
     return infos

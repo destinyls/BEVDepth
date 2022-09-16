@@ -63,6 +63,7 @@ def read_label_bboxes(label_path, denorm_file):
 def kitti_evaluation(pred_label_path, gt_label_path, metric_path="metric"):
     pred_annos, image_ids = kitti.get_label_annos(pred_label_path, return_ids=True)
     gt_annos = kitti.get_label_annos(gt_label_path, image_ids=image_ids)
+    print(len(pred_annos), len(gt_annos))
     result, ret_dict = kitti_eval(gt_annos, pred_annos, ["Car", "Pedestrian", "Cyclist"], metric="R40")
     mAP_3d_moderate = ret_dict["KITTI/Car_3D_moderate_strict"]
     os.makedirs(os.path.join(metric_path, "R40"), exist_ok=True)
@@ -168,6 +169,31 @@ def bbbox2bbox(box3d, Tr_velo_to_cam, camera_intrinsic, img_size=[1920, 1080]):
     box2d[2] = min(box2d[2], img_size[0])
     box2d[3] = min(box2d[3], img_size[1])
     return box2d
+
+def read_json(path):
+    with open(path, "r") as f:
+        my_json = json.load(f)
+        return my_json
+        
+def get_lidar2cam(calib_path):
+    my_json = read_json(calib_path)
+    if "Tr_velo_to_cam" in my_json.keys():
+        velo2cam = np.array(my_json["Tr_velo_to_cam"]).reshape(3, 4)
+        r_velo2cam = velo2cam[:, :3]
+        t_velo2cam = velo2cam[:, 3].reshape(3, 1)
+    else:
+        r_velo2cam = np.array(my_json["rotation"])
+        t_velo2cam = np.array(my_json["translation"])
+    Tr_velo_to_cam = np.eye(4)
+    Tr_velo_to_cam[:3,:3] = r_velo2cam
+    Tr_velo_to_cam[:3,3] = t_velo2cam.flatten()
+    return Tr_velo_to_cam, r_velo2cam, t_velo2cam
+
+def get_cam_calib_intrinsic(calib_path):
+    my_json = read_json(calib_path)
+    cam_K = my_json["cam_K"]
+    calib = np.array(cam_K).reshape([3, 3], order="C")
+    return calib
     
 def result2kitti(results_file, results_path, dair_root, demo=True):
     with open(results_file,'r',encoding='utf8')as fp:
@@ -178,15 +204,14 @@ def result2kitti(results_file, results_path, dair_root, demo=True):
         token2sample_1 = json.load(fp)
     token2sample.update(token2sample_1)
     for sample_token in tqdm(results.keys()):
-        sample_id = int(token2sample[sample_token])
-        src_denorm_file = os.path.join(dair_root, "training/denorm", sample_token + ".txt")
-        src_calib_file = os.path.join(dair_root, "training/calib", sample_token + ".txt")
-        if not os.path.exists(src_denorm_file):
-            src_denorm_file = os.path.join(dair_root, "validation/denorm", sample_token + ".txt")
-            src_calib_file = os.path.join(dair_root, "validation/calib", sample_token + ".txt")
-  
-        Tr_velo_to_cam, r_velo2cam, t_velo2cam = get_velo2cam(src_denorm_file)
-        camera_intrinsic = load_calib(src_calib_file)
+        sample_id = int(sample_token.split("/")[1].split(".")[0])
+        camera_intrinsic_file = os.path.join(dair_root, "calib/camera_intrinsic", "{:06d}".format(sample_id) + ".json")
+        virtuallidar_to_camera_file = os.path.join(dair_root, "calib/virtuallidar_to_camera", "{:06d}".format(sample_id) + ".json")
+
+        camera_intrinsic = get_cam_calib_intrinsic(camera_intrinsic_file)
+        Tr_velo_to_cam, r_velo2cam, t_velo2cam = get_lidar2cam(virtuallidar_to_camera_file)
+        # Tr_velo_to_cam, r_velo2cam, t_velo2cam = get_velo2cam(src_denorm_file)
+        # camera_intrinsic = load_calib(src_calib_file)
         camera_intrinsic = np.concatenate([camera_intrinsic, np.zeros((camera_intrinsic.shape[0], 1))], axis=1)
         preds = results[sample_token]
         pred_lines = []

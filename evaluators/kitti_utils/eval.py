@@ -599,6 +599,7 @@ def do_eval(gt_annos,
     
     get_mAP_fnc = get_mAP_R40 if metric == 'R40' else get_mAP
     mAP_bbox, mAP_aos = None, None
+    print("bbox metric")
     if 'bbox' in eval_types:
         ret = eval_class(
             gt_annos,
@@ -611,13 +612,15 @@ def do_eval(gt_annos,
         mAP_bbox = get_mAP_fnc(ret['precision'])
         if 'aos' in eval_types:
             mAP_aos = get_mAP_fnc(ret['orientation'])
-
+    
+    print("bev metric")
     mAP_bev = None
     if 'bev' in eval_types:
         ret = eval_class(gt_annos, dt_annos, current_classes, difficultys, 1,
                          min_overlaps)
         mAP_bev = get_mAP_fnc(ret['precision'])
 
+    print("3d metric")
     mAP_3d = None
     if '3d' in eval_types:
         ret = eval_class(gt_annos, dt_annos, current_classes, difficultys, 2,
