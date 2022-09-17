@@ -222,7 +222,7 @@ class DetMVNuscEvaluator():
             tmp_dir.cleanup()
         '''
         dair_root = "data/dair-v2x"
-        gt_label_path = os.path.join("data/rope3d-kitti", "training", "label_2")
+        gt_label_path = os.path.join("data/dair-v2x-kitti", "training", "label_2")
         results_path = "outputs"         
         pred_label_path = result2kitti(result_files["img_bbox"], results_path, dair_root, demo=False)
         kitti_evaluation(pred_label_path, gt_label_path, metric_path="R40")
@@ -407,6 +407,6 @@ if __name__ == "__main__":
     dair_root = "data/dair-v2x"
     gt_label_path = os.path.join("data/dair-v2x-kitti", "training", "label_2")
     results_path = "outputs"
-    pred_label_path = result2kitti(result_files, results_path, dair_root, demo=True)
+    pred_label_path = result2kitti(result_files, results_path, dair_root, demo=False)
     pred_label_path = "outputs/data"
     kitti_evaluation(pred_label_path, gt_label_path, metric_path="R40")

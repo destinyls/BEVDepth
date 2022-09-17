@@ -32,8 +32,8 @@ def get_lidar_3d_8points(obj_size, yaw_lidar, center_lidar):
     corners_3d_lidar = lidar_r * corners_3d_lidar + np.matrix(center_lidar).T
     return corners_3d_lidar.T
 
-def read_label_bboxes(label_path, denorm_file):
-    _, _, Tr_cam2lidar, _ = get_cam2lidar(denorm_file)
+def read_label_bboxes(label_path, Tr_cam2lidar):
+    # _, _, Tr_cam2lidar, _ = get_cam2lidar(denorm_file)
     fieldnames = ['type', 'truncated', 'occluded', 'alpha', 'xmin', 'ymin', 'xmax', 'ymax', 'dh', 'dw',
                   'dl', 'lx', 'ly', 'lz', 'ry']
     boxes = []
@@ -122,7 +122,7 @@ def get_camera_3d_8points(obj_size, yaw_lidar, center_lidar, center_in_cam, r_ve
     alpha_arctan = normalize_angle(alpha)
     return alpha_arctan, yaw
 
-def pcd_vis(boxes, save_file="demo.jpg", label_path=None):    
+def pcd_vis(boxes, save_file="demo.jpg", label_path=None, Tr_velo_to_cam=None):    
     range_list = [(-60, 60), (0, 100), (-2., -2.), 0.1]
     points_filter = PointCloudFilter(side_range=range_list[0], fwd_range=range_list[1], res=range_list[-1])
     bev_image = points_filter.get_meshgrid()
@@ -139,7 +139,8 @@ def pcd_vis(boxes, save_file="demo.jpg", label_path=None):
             cv2.line(bev_image, (int(x_img[2]), int(y_img[2])), (int(x_img[3]), int(y_img[3])), (255,0,0), 2)
     if label_path is not None:
         denorm_file = label_path.replace("label_2", "denorm")
-        boxes = read_label_bboxes(label_path, denorm_file)
+        Tr_cam2lidar = np.linalg.inv(Tr_velo_to_cam)
+        boxes = read_label_bboxes(label_path, Tr_cam2lidar)
         for n in range(len(boxes)):
             corner_points = boxes[n]
             x_img, y_img = points_filter.pcl2xy_plane(corner_points[:, 0], corner_points[:, 1])
@@ -209,6 +210,7 @@ def result2kitti(results_file, results_path, dair_root, demo=True):
         virtuallidar_to_camera_file = os.path.join(dair_root, "calib/virtuallidar_to_camera", "{:06d}".format(sample_id) + ".json")
 
         camera_intrinsic = get_cam_calib_intrinsic(camera_intrinsic_file)
+        
         Tr_velo_to_cam, r_velo2cam, t_velo2cam = get_lidar2cam(virtuallidar_to_camera_file)
         # Tr_velo_to_cam, r_velo2cam, t_velo2cam = get_velo2cam(src_denorm_file)
         # camera_intrinsic = load_calib(src_calib_file)
@@ -258,9 +260,9 @@ def result2kitti(results_file, results_path, dair_root, demo=True):
         if demo:
             os.makedirs(os.path.join(results_path, "demo"), exist_ok=True)
             # pcd_path = os.path.join(dair_root, "velodyne", "{:06d}".format(sample_id) + ".pcd")
-            label_path = os.path.join("data/rope3d-kitti", "training", "label_2", "{:06d}".format(sample_id) + ".txt")
+            label_path = os.path.join("data/dair-v2x-kitti", "training", "label_2", "{:06d}".format(sample_id) + ".txt")
             demo_file = os.path.join(results_path, "demo", "{:06d}".format(sample_id) + ".jpg")
-            pcd_vis(bboxes, demo_file, label_path)
+            pcd_vis(bboxes, demo_file, label_path, Tr_velo_to_cam)
     return os.path.join(results_path, "data")
 
 if __name__ == "__main__":

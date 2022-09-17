@@ -422,7 +422,7 @@ class BEVDepthLightningModel(LightningModule):
             bda_aug_conf=self.bda_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path='data/dair-v2x/dair_12hz_infos_train.pkl',
+            info_path='data/dair-v2x/dair_12hz_infos_val.pkl',
             is_train=False,
             img_conf=self.img_conf,
             num_sweeps=self.num_sweeps,

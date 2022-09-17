@@ -63,6 +63,16 @@ def load_data(dair_root, token):
     P = get_P(camera_intrinsic_path)
     gt_names, gt_boxes = get_annos(label_path)
     return r_velo2cam, t_velo2cam, P, gt_names, gt_boxes, img_pth
+
+def cam2velo(r_velo2cam, t_velo2cam):
+    Tr_velo2cam = np.eye(4)
+    Tr_velo2cam[:3, :3] = r_velo2cam
+    Tr_velo2cam[:3 ,3] = t_velo2cam.flatten()
+    Tr_cam2velo = np.linalg.inv(Tr_velo2cam)
+    r_cam2velo = Tr_cam2velo[:3, :3]
+    t_cam2velo = Tr_cam2velo[:3, 3]
+    return r_cam2velo, t_cam2velo
+    
     
 def equation_plane(points): 
     x1, y1, z1 = points[0, 0], points[0, 1], points[0, 2]
@@ -118,7 +128,8 @@ def generate_info_dair(dair_root, split):
             cam_info['ego_pose'] = ego_pose
             
             denorm = get_denorm(r_velo2cam, t_velo2cam)
-            calibrated_sensor = {"token": token, "sensor_token": token, "translation": t_velo2cam.flatten(), "rotation_matrix": r_velo2cam, "camera_intrinsic": camera_intrinsic}
+            r_cam2velo, t_cam2velo = cam2velo(r_velo2cam, t_velo2cam)
+            calibrated_sensor = {"token": token, "sensor_token": token, "translation": t_cam2velo.flatten(), "rotation_matrix": r_cam2velo, "camera_intrinsic": camera_intrinsic}
             cam_info['calibrated_sensor'] = calibrated_sensor
             cam_info['denorm'] = denorm
             cam_infos[cam_name] = cam_info
@@ -166,7 +177,6 @@ def generate_info_dair(dair_root, split):
             ann_info["num_radar_pts"] = 0            
             ann_info['velocity'] = np.zeros(3)
             ann_infos.append(ann_info)
-            
         info['ann_infos'] = ann_infos
         infos.append(info)
     return infos
