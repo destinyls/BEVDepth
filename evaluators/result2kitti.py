@@ -15,7 +15,7 @@ from evaluators.kitti_utils.eval import kitti_eval
 from scripts.gen_info_rope3d import *
 from scipy.spatial.transform import Rotation as R
 
-category_map = {"car": "Car", "van": "Car", "truck": "Truck", "bus": "Truck", "pedestrian": "Pedestrian", "bicycle": "Cyclist", "trailer": "Cyclist", "motorcycle": "Cyclist"}
+category_map = {"car": "Car", "van": "Car", "truck": "Car", "bus": "Car", "pedestrian": "Pedestrian", "bicycle": "Cyclist", "trailer": "Cyclist", "motorcycle": "Cyclist"}
 
 def get_lidar_3d_8points(obj_size, yaw_lidar, center_lidar):
     center_lidar = [float(center_lidar[0]), float(center_lidar[1]), float(center_lidar[2])]

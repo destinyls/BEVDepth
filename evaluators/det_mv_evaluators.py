@@ -403,7 +403,7 @@ class DetMVNuscEvaluator():
         return result_files, tmp_dir
     
 if __name__ == "__main__":
-    result_files = "./outputs/bev_depth_lss_r50_256x704_128x128_24e/results_nusc.json"
+    result_files = "./outputs/bev_depth_lss_r50_256x704_128x128_24e_image_pc/results_nusc.json"
     dair_root = "data/dair-v2x"
     gt_label_path = os.path.join("data/dair-v2x-kitti", "training", "label_2")
     results_path = "outputs"
