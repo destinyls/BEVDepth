@@ -9,7 +9,7 @@ from pyquaternion import Quaternion
 from tqdm import tqdm
 
 from scripts.vis_utils import *
-'''
+
 name2nuscenceclass = {
     "car": "vehicle.car",
     "van": "vehicle.car",
@@ -18,23 +18,9 @@ name2nuscenceclass = {
     "cyclist": "vehicle.bicycle",
     "bicycle": "vehicle.bicycle",
     "tricyclist": "vehicle.bicycle",
-    "motorcycle": "vehicle.motorcycle",
-    "motorcylist": "vehicle.motorcycle",
-    "barrow": "vehicle.bicycle",
+    "motorcycle": "vehicle.bicycle",
+    "motorcyclist": "vehicle.bicycle",
     "barrowlist": "vehicle.bicycle",
-    "pedestrian": "human.pedestrian.adult",
-    "traffic_cone": "movable_object.trafficcone",
-}
-'''
-name2nuscenceclass = {
-    "car": "vehicle.car",
-    "van": "vehicle.car",
-    "truck": "vehicle.truck",
-    "bus": "vehicle.bus.rigid",
-    "cyclist": "vehicle.bicycle",
-    "bicycle": "vehicle.bicycle",
-    "tricyclist": "vehicle.trailer",
-    "motorcycle": "vehicle.motorcycle",
     "barrow": "vehicle.bicycle",
     "pedestrian": "human.pedestrian.adult",
     "traffic_cone": "movable_object.trafficcone",
