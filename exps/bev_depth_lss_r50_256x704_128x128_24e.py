@@ -38,7 +38,7 @@ backbone_conf = {
     'x_bound': [0, 102.4, 0.8],
     'y_bound': [-51.2, 51.2, 0.8],
     'z_bound': [-5, 3, 8],
-    'd_bound': [2.0, 116.0, 0.5],
+    'd_bound': [-3.0, 1.0, 0.1],
     'final_dim':
     final_dim,
     'output_channels':
@@ -223,7 +223,7 @@ class BEVDepthLightningModel(LightningModule):
                               is_train_depth=False)
         self.mode = 'valid'
         self.img_conf = img_conf
-        self.data_use_cbgs = False
+        self.data_use_cbgs = True
         self.num_sweeps = 1
         self.sweep_idxes = list()
         self.key_idxes = list()
@@ -265,6 +265,7 @@ class BEVDepthLightningModel(LightningModule):
             depth_loss = self.get_depth_loss(depth_labels.cuda(), depth_preds)
             self.log('detection_loss', detection_loss)
             self.log('depth_loss', depth_loss)
+            print(depth_loss)
             return detection_loss + depth_loss
         else:
             self.log('detection_loss', detection_loss)
@@ -422,7 +423,7 @@ class BEVDepthLightningModel(LightningModule):
             bda_aug_conf=self.bda_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path='data/dair-v2x/dair_12hz_infos_val.pkl',
+            info_path='data/dair-v2x/dair_12hz_infos_train.pkl',
             is_train=False,
             img_conf=self.img_conf,
             num_sweeps=self.num_sweeps,

@@ -9,7 +9,23 @@ from pyquaternion import Quaternion
 from tqdm import tqdm
 
 from scripts.vis_utils import *
-
+'''
+name2nuscenceclass = {
+    "car": "vehicle.car",
+    "van": "vehicle.car",
+    "truck": "vehicle.truck",
+    "bus": "vehicle.bus.rigid",
+    "cyclist": "vehicle.bicycle",
+    "bicycle": "vehicle.bicycle",
+    "tricyclist": "vehicle.bicycle",
+    "motorcycle": "vehicle.motorcycle",
+    "motorcylist": "vehicle.motorcycle",
+    "barrow": "vehicle.bicycle",
+    "barrowlist": "vehicle.bicycle",
+    "pedestrian": "human.pedestrian.adult",
+    "traffic_cone": "movable_object.trafficcone",
+}
+'''
 name2nuscenceclass = {
     "car": "vehicle.car",
     "van": "vehicle.car",
@@ -97,7 +113,8 @@ def get_denorm(rotation_matrix, translation):
     ground_points_lidar = np.array([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]])
     ground_points_lidar = np.concatenate((ground_points_lidar, np.ones((ground_points_lidar.shape[0], 1))), axis=1)
     ground_points_cam = np.matmul(lidar2cam, ground_points_lidar.T).T
-    denorm = equation_plane(ground_points_cam)
+    denorm = -1 * equation_plane(ground_points_cam)
+    
     return denorm
 
 def generate_info_dair(dair_root, split):    
@@ -179,6 +196,7 @@ def generate_info_dair(dair_root, split):
             ann_infos.append(ann_info)
         info['ann_infos'] = ann_infos
         infos.append(info)
+        
     return infos
 
 def main():

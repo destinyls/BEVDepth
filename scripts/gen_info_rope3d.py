@@ -6,12 +6,8 @@ import cv2
 
 import mmcv
 import numpy as np
-from nuscenes.nuscenes import NuScenes
-from nuscenes.utils import splits
 from pyquaternion import Quaternion
 from tqdm import tqdm
-
-from scipy.spatial.transform import Rotation as R
 
 name2nuscenceclass = {
     "car": "vehicle.car",
@@ -60,7 +56,6 @@ def load_denorm(denorm_file):
 
 def get_cam2lidar(denorm_file):
     denorm = load_denorm(denorm_file)
-    
     Rx = np.array([[1.0, 0.0, 0.0], 
                    [0.0, 0.0, 1.0], 
                    [0.0, -1.0, 0.0]])
