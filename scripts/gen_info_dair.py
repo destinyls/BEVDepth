@@ -51,6 +51,8 @@ def get_annos(path):
         x, y, z = float(item["3d_location"]["x"]), float(item["3d_location"]["y"]), float(item["3d_location"]["z"])
         h, w, l = float(item["3d_dimensions"]["h"]), float(item["3d_dimensions"]["w"]), float(item["3d_dimensions"]["l"])                                                            
         lidar_yaw = float(item["rotation"])
+        if (x + y + z) < 1e-9:
+            continue
         gt_boxes.append([x, y, z, l, w, h, lidar_yaw])
     gt_boxes = np.array(gt_boxes)
     return gt_names, gt_boxes
@@ -135,8 +137,7 @@ def generate_info_dair(dair_root, split):
             calibrated_sensor = {"token": token, "sensor_token": token, "translation": t_cam2velo.flatten(), "rotation_matrix": r_cam2velo, "camera_intrinsic": camera_intrinsic}
             cam_info['calibrated_sensor'] = calibrated_sensor
             cam_info['denorm'] = denorm
-            cam_infos[cam_name] = cam_info
-                        
+            cam_infos[cam_name] = cam_info                  
         for lidar_name in lidar_names:
             lidar_info = dict()
             lidar_info['sample_token'] = token
