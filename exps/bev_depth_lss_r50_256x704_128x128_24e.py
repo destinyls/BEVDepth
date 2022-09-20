@@ -1,6 +1,8 @@
 # Copyright (c) Megvii Inc. All rights reserved.
 from argparse import ArgumentParser, Namespace
 
+import os
+from tabnanny import check
 import mmcv
 import pytorch_lightning as pl
 import torch
@@ -10,6 +12,9 @@ import torch.utils.data
 import torch.utils.data.distributed
 import torchvision.models as models
 from pytorch_lightning.core import LightningModule
+from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks import Callback
+
 from torch.cuda.amp.autocast_mode import autocast
 from torch.optim.lr_scheduler import MultiStepLR
 
@@ -441,9 +446,13 @@ def main(args: Namespace) -> None:
         pl.seed_everything(args.seed)
 
     model = BEVDepthLightningModel(**vars(args))
-    trainer = pl.Trainer.from_argparse_args(args)
+    checkpoint_callback = ModelCheckpoint(dirpath="./outputs/bev_depth_lss_r50_256x704_128x128_24e/checkpoints", filename='{epoch}', every_n_epochs=2, save_top_k=-1)
+    trainer = pl.Trainer.from_argparse_args(args, callbacks=[checkpoint_callback])
     if args.evaluate:
-        trainer.test(model, ckpt_path=args.ckpt_path)
+        for ckpt_name in os.listdir(args.ckpt_path):
+            model_path = os.path.join(args.ckpt_path, ckpt_name)
+            trainer.test(model, ckpt_path=model_path)
+            os.remove(model_path)
     else:
         trainer.fit(model)
 
