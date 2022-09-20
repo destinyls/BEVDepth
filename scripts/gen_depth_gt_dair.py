@@ -103,12 +103,12 @@ if __name__ == '__main__':
         # demo(img_path, gt_boxes, r_lidar2cam, t_lidar2cam, camera_intrinsic)
         os.makedirs(os.path.join(data_root, 'depth_gt'), exist_ok=True)
         os.makedirs(os.path.join(data_root, 'height_gt'), exist_ok=True)
-        '''
+        
         np.concatenate([img_poins[:2, :].T, depths[:, None]],
                        axis=1).astype(np.float32).flatten().tofile(
                            os.path.join(data_root, 'depth_gt',
                                         f'{sample_id}.jpg.bin'))
-        '''               
+                       
         np.concatenate([img_poins[:2, :].T, height_offsets[:, None]],
                        axis=1).astype(np.float32).flatten().tofile(
                            os.path.join(data_root, 'height_gt',

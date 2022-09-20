@@ -11,6 +11,8 @@ from PIL import Image
 from pyquaternion import Quaternion
 from torch.utils.data import Dataset
 
+from scripts.gen_info_dair import equation_plane
+
 __all__ = ['NuscMVDetDataset']
 
 map_name_from_general_to_detection = {
@@ -304,6 +306,13 @@ class NuscMVDetDataset(Dataset):
         sensor2virtual = np.eye(4)
         sensor2virtual[:3, :3] = rot_mat
         return sensor2virtual.astype(np.float32)
+    
+    def get_denorm(lidar2cam):
+        ground_points_lidar = np.array([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]])
+        ground_points_lidar = np.concatenate((ground_points_lidar, np.ones((ground_points_lidar.shape[0], 1))), axis=1)
+        ground_points_cam = np.matmul(lidar2cam, ground_points_lidar.T).T
+        denorm = -1 * equation_plane(ground_points_cam)
+        return denorm
 
     def get_image(self, cam_infos, cams):
         """Given data and cam_names, return image data needed.
@@ -402,11 +411,13 @@ class NuscMVDetDataset(Dataset):
                 keysensor2keyego[:3, :3] = keysensor2keyego_rot
                 keysensor2keyego[:3, -1] = keysensor2keyego_tran
                 keyego2keysensor = keysensor2keyego.inverse()
+                
                 keysensor2sweepsensor = (
                     keyego2keysensor @ global2keyego @ sweepego2global
                     @ sweepsensor2sweepego).inverse()
                 sweepsensor2keyego = global2keyego @ sweepego2global @\
-                    sweepsensor2sweepego    
+                    sweepsensor2sweepego
+                
                 sensor2virtual = torch.Tensor(self.get_sensor2virtual(cam_info[cam]['denorm']))
                 sensor2ego_mats.append(sweepsensor2keyego)
                 sensor2sensor_mats.append(keysensor2sweepsensor)

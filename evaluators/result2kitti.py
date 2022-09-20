@@ -199,11 +199,6 @@ def get_cam_calib_intrinsic(calib_path):
 def result2kitti(results_file, results_path, dair_root, demo=True):
     with open(results_file,'r',encoding='utf8')as fp:
         results = json.load(fp)["results"]
-    with open("data/rope3d-kitti/ImageSets/train.json") as fp:
-        token2sample = json.load(fp)
-    with open("data/rope3d-kitti/ImageSets/val.json") as fp:
-        token2sample_1 = json.load(fp)
-    token2sample.update(token2sample_1)
     for sample_token in tqdm(results.keys()):
         sample_id = int(sample_token.split("/")[1].split(".")[0])
         camera_intrinsic_file = os.path.join(dair_root, "calib/camera_intrinsic", "{:06d}".format(sample_id) + ".json")
