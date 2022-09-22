@@ -79,7 +79,7 @@ def write_kitti_in_txt(pred_lines, path_txt):
         wf.write(line_string)
     wf.close()
 
-def get_velo2cam(src_denorm_file):
+def get_lidar2cam(src_denorm_file):
     _, _, Tr_cam2lidar, _ = get_cam2lidar(src_denorm_file)
     Tr_velo_to_cam = np.linalg.inv(Tr_cam2lidar) 
     r_velo2cam, t_velo2cam = Tr_velo_to_cam[:3, :3], Tr_velo_to_cam[:3, 3]
@@ -96,7 +96,7 @@ def normalize_angle(angle):
     if np.cos(angle) < 0:
         alpha_arctan = alpha_arctan + math.pi
     return alpha_arctan
-
+    
 def get_camera_3d_8points(obj_size, yaw_lidar, center_lidar, center_in_cam, r_velo2cam, t_velo2cam):
     liadr_r = np.matrix([[math.cos(yaw_lidar), -math.sin(yaw_lidar), 0], [math.sin(yaw_lidar), math.cos(yaw_lidar), 0], [0, 0, 1]])
     l, w, h = obj_size
@@ -151,6 +151,7 @@ def pcd_vis(boxes, save_file="demo.jpg", label_path=None, Tr_velo_to_cam=None):
                 cv2.line(bev_image, (int(x_img[0]), int(y_img[0])), (int(x_img[3]), int(y_img[3])), (0,0,255), 2)
                 cv2.line(bev_image, (int(x_img[1]), int(y_img[1])), (int(x_img[2]), int(y_img[2])), (0,0,255), 2)
                 cv2.line(bev_image, (int(x_img[2]), int(y_img[2])), (int(x_img[3]), int(y_img[3])), (0,0,255), 2)
+    print(save_file)
     cv2.imwrite(save_file, bev_image)
     
 def bbbox2bbox(box3d, Tr_velo_to_cam, camera_intrinsic, img_size=[1920, 1080]):
@@ -175,20 +176,6 @@ def read_json(path):
     with open(path, "r") as f:
         my_json = json.load(f)
         return my_json
-        
-def get_lidar2cam(calib_path):
-    my_json = read_json(calib_path)
-    if "Tr_velo_to_cam" in my_json.keys():
-        velo2cam = np.array(my_json["Tr_velo_to_cam"]).reshape(3, 4)
-        r_velo2cam = velo2cam[:, :3]
-        t_velo2cam = velo2cam[:, 3].reshape(3, 1)
-    else:
-        r_velo2cam = np.array(my_json["rotation"])
-        t_velo2cam = np.array(my_json["translation"])
-    Tr_velo_to_cam = np.eye(4)
-    Tr_velo_to_cam[:3,:3] = r_velo2cam
-    Tr_velo_to_cam[:3,3] = t_velo2cam.flatten()
-    return Tr_velo_to_cam, r_velo2cam, t_velo2cam
 
 def get_cam_calib_intrinsic(calib_path):
     my_json = read_json(calib_path)
@@ -202,13 +189,10 @@ def result2kitti(results_file, results_path, dair_root, demo=True):
     for sample_token in tqdm(results.keys()):
         sample_id = int(sample_token.split("/")[1].split(".")[0])
         camera_intrinsic_file = os.path.join(dair_root, "calib/camera_intrinsic", "{:06d}".format(sample_id) + ".json")
-        virtuallidar_to_camera_file = os.path.join(dair_root, "calib/virtuallidar_to_camera", "{:06d}".format(sample_id) + ".json")
-
+        src_denorm_file = os.path.join(dair_root, "denorm", "{:06d}".format(sample_id) + ".txt")
         camera_intrinsic = get_cam_calib_intrinsic(camera_intrinsic_file)
         
-        Tr_velo_to_cam, r_velo2cam, t_velo2cam = get_lidar2cam(virtuallidar_to_camera_file)
-        # Tr_velo_to_cam, r_velo2cam, t_velo2cam = get_velo2cam(src_denorm_file)
-        # camera_intrinsic = load_calib(src_calib_file)
+        Tr_velo_to_cam, r_velo2cam, t_velo2cam = get_lidar2cam(src_denorm_file)
         camera_intrinsic = np.concatenate([camera_intrinsic, np.zeros((camera_intrinsic.shape[0], 1))], axis=1)
         preds = results[sample_token]
         pred_lines = []
@@ -229,7 +213,6 @@ def result2kitti(results_file, results_path, dair_root, demo=True):
                 obj_size, yaw_lidar, bottom_center, bottom_center_in_cam, r_velo2cam, t_velo2cam
             )
             yaw  = 0.5 * np.pi - yaw_lidar
-
             cam_x, cam_y, cam_z = convert_point(np.array([x, y, z, 1]).T, Tr_velo_to_cam)
             box = get_lidar_3d_8points([w, l, h], yaw_lidar, [x, y, z + h/2])
             box2d = bbbox2bbox(box, Tr_velo_to_cam, camera_intrinsic)

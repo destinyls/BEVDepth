@@ -1,7 +1,7 @@
+from operator import matmul
 import os
 import math
 import json
-import cv2
 
 import mmcv
 import numpy as np
@@ -9,6 +9,8 @@ from pyquaternion import Quaternion
 from tqdm import tqdm
 
 from scripts.vis_utils import *
+from scripts.gen_info_rope3d import get_cam2lidar
+from evaluators.result2kitti import get_camera_3d_8points
 
 name2nuscenceclass = {
     "car": "vehicle.car",
@@ -57,51 +59,41 @@ def get_annos(path):
 
 def load_data(dair_root, token):
     sample_id = token.split('/')[1].split('.')[0]
-    img_pth = os.path.join(dair_root, token)
     camera_intrinsic_path = os.path.join(dair_root, "calib", "camera_intrinsic", sample_id + ".json")
     virtuallidar_to_camera_path = os.path.join(dair_root, "calib", "virtuallidar_to_camera", sample_id + ".json")
     label_path = os.path.join(dair_root, "label", "camera", sample_id + ".json")
     r_velo2cam, t_velo2cam = get_velo2cam(virtuallidar_to_camera_path)
-    P = get_P(camera_intrinsic_path)
-    gt_names, gt_boxes = get_annos(label_path)
-    return r_velo2cam, t_velo2cam, P, gt_names, gt_boxes, img_pth
-
-def cam2velo(r_velo2cam, t_velo2cam):
     Tr_velo2cam = np.eye(4)
     Tr_velo2cam[:3, :3] = r_velo2cam
-    Tr_velo2cam[:3 ,3] = t_velo2cam.flatten()
-    Tr_cam2velo = np.linalg.inv(Tr_velo2cam)
-    r_cam2velo = Tr_cam2velo[:3, :3]
-    t_cam2velo = Tr_cam2velo[:3, 3]
-    return r_cam2velo, t_cam2velo
-    
-    
-def equation_plane(points): 
-    x1, y1, z1 = points[0, 0], points[0, 1], points[0, 2]
-    x2, y2, z2 = points[1, 0], points[1, 1], points[1, 2]
-    x3, y3, z3 = points[2, 0], points[2, 1], points[2, 2]
-    a1 = x2 - x1
-    b1 = y2 - y1
-    c1 = z2 - z1
-    a2 = x3 - x1
-    b2 = y3 - y1
-    c2 = z3 - z1
-    a = b1 * c2 - b2 * c1
-    b = a2 * c1 - a1 * c2
-    c = a1 * b2 - b1 * a2
-    d = (- a * x1 - b * y1 - c * z1)
-    return np.array([a, b, c, d])
+    Tr_velo2cam[:3, 3] = t_velo2cam.flatten()
+     
+    P = get_P(camera_intrinsic_path)
+    gt_names, gt_boxes = get_annos(label_path)
+    return r_velo2cam, t_velo2cam, Tr_velo2cam, P, gt_names, gt_boxes
 
-def get_denorm(rotation_matrix, translation):
-    lidar2cam = np.eye(4)
-    lidar2cam[:3, :3] = rotation_matrix
-    lidar2cam[:3, 3] = translation.flatten()
-    ground_points_lidar = np.array([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]])
-    ground_points_lidar = np.concatenate((ground_points_lidar, np.ones((ground_points_lidar.shape[0], 1))), axis=1)
-    ground_points_cam = np.matmul(lidar2cam, ground_points_lidar.T).T
-    denorm = -1 * equation_plane(ground_points_cam)
-    
-    return denorm
+def to_corners3d(obj_size, yaw_lidar, center_lidar):
+    liadr_r = np.matrix([[math.cos(yaw_lidar), -math.sin(yaw_lidar), 0], [math.sin(yaw_lidar), math.cos(yaw_lidar), 0], [0, 0, 1]])
+    l, w, h = obj_size
+    corners_3d = np.matrix(
+        [
+            [l / 2, l / 2, -l / 2, -l / 2, l / 2, l / 2, -l / 2, -l / 2],
+            [w / 2, -w / 2, -w / 2, w / 2, w / 2, -w / 2, -w / 2, w / 2],
+            [0, 0, 0, 0, h, h, h, h],
+        ]
+    )
+    corners_3d = liadr_r * corners_3d + np.matrix(center_lidar).T
+    return corners_3d
+
+def corners3d_yaw(corners_3d):
+    x0, y0 = corners_3d[0, 0], corners_3d[1, 0]
+    x3, y3 = corners_3d[0, 3], corners_3d[1, 3]
+    dx, dy = x0 - x3, y0 - y3
+    yaw = math.atan2(dy, dx)
+    if yaw > math.pi:
+        yaw = yaw - 2.0 * math.pi
+    if yaw <= (-1 * math.pi):
+        yaw = yaw + 2.0 * math.pi
+    return yaw
 
 def generate_info_dair(dair_root, split):    
     infos = mmcv.load("scripts/single-infrastructure-split-data.json")
@@ -109,8 +101,9 @@ def generate_info_dair(dair_root, split):
     infos = list()
     for sample_id in tqdm(split_list):
         token = "image/" + sample_id + ".jpg"
-        r_velo2cam, t_velo2cam, camera_intrinsic, gt_names, gt_boxes, img_pth = load_data(dair_root, token)
-
+        _, _, Tr_velo2cam, camera_intrinsic, gt_names, gt_boxes = load_data(dair_root, token)
+        r_cam2lidar, t_cam2lidar, Tr_cam2lidar, denorm = get_cam2lidar(os.path.join(dair_root, "denorm", sample_id + ".txt"))
+        
         info = dict()
         cam_info = dict()
         info['sample_token'] = token
@@ -129,10 +122,8 @@ def generate_info_dair(dair_root, split):
             cam_info['filename'] = token
             ego_pose = {"translation": [0.0, 0.0, 0.0], "rotation": [1.0, 0.0, 0.0, 0.0], "token": token, "timestamp": 1000000}
             cam_info['ego_pose'] = ego_pose
-            
-            denorm = get_denorm(r_velo2cam, t_velo2cam)
-            r_cam2velo, t_cam2velo = cam2velo(r_velo2cam, t_velo2cam)
-            calibrated_sensor = {"token": token, "sensor_token": token, "translation": t_cam2velo.flatten(), "rotation_matrix": r_cam2velo, "camera_intrinsic": camera_intrinsic}
+                        
+            calibrated_sensor = {"token": token, "sensor_token": token, "translation": t_cam2lidar, "rotation_matrix": r_cam2lidar, "camera_intrinsic": camera_intrinsic}
             cam_info['calibrated_sensor'] = calibrated_sensor
             cam_info['denorm'] = denorm
             cam_infos[cam_name] = cam_info                  
@@ -144,6 +135,7 @@ def generate_info_dair(dair_root, split):
             lidar_info['timestamp'] = 1000000
             lidar_info['filename'] = "velodyne/" + sample_id + ".pcd"
             lidar_info['calibrated_sensor'] = calibrated_sensor
+            lidar_info['Tr_velo2cam'] = Tr_velo2cam
             lidar_infos[lidar_name] = lidar_info            
         info['cam_infos'] = cam_infos
         info['lidar_infos'] = lidar_infos
@@ -158,7 +150,19 @@ def generate_info_dair(dair_root, split):
             gt_box = gt_boxes[idx]
             lwh = gt_box[3:6]
             loc = gt_box[:3]    # need to certify
-            yaw_lidar = gt_box[6]
+            yaw_lidar = gt_box[6]  # need to be confirmed
+            
+            corners_3d = to_corners3d(lwh, yaw_lidar, loc)
+            corners_3d_extend = np.concatenate((corners_3d, np.ones((1, corners_3d.shape[1]))), axis=0)
+            corners_3d_cam = np.matmul(Tr_velo2cam, corners_3d_extend)
+            corners_3d_lidar = np.matmul(Tr_cam2lidar, corners_3d_cam)
+            corners_3d_lidar = corners_3d_lidar[:3, :]
+            yaw_lidar = corners3d_yaw(corners_3d_lidar)
+                        
+            loc = np.array([loc[0], loc[1], loc[2], 1])[:, np.newaxis]
+            loc = np.matmul(Tr_velo2cam, loc)
+            loc = np.matmul(Tr_cam2lidar, loc).squeeze(-1)[:3]
+              
             rot_mat = np.array([[math.cos(yaw_lidar), -math.sin(yaw_lidar), 0], 
                                 [math.sin(yaw_lidar), math.cos(yaw_lidar), 0], 
                                 [0, 0, 1]])    
@@ -194,3 +198,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+

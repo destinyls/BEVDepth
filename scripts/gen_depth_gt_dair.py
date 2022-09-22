@@ -49,6 +49,8 @@ if __name__ == '__main__':
     data_root = 'data/dair-v2x'
     info_path = 'data/dair-v2x/dair_12hz_infos_train.pkl'
     mmcv.mkdir_or_exist(os.path.join(data_root, 'depth_gt'))
+    mmcv.mkdir_or_exist(os.path.join(data_root, 'height_gt'))
+    
     infos = mmcv.load(info_path)
     for info in tqdm(infos):
         sample_id = info["sample_token"].split('/')[1].split('.')[0]
@@ -65,16 +67,10 @@ if __name__ == '__main__':
         cam2virtual = get_cam2virtual(denorm)
         height_ref = np.abs(denorm[3]) / np.sqrt(denorm[0]**2 + denorm[1]**2 + denorm[2]**2)
         
-        cam2lidar = np.eye(4)
-        cam2lidar[:3,:3] = rotation_matrix
-        cam2lidar[:3, 3] = translation.flatten()
-        lidar2cam = np.linalg.inv(cam2lidar)
-        r_lidar2cam = lidar2cam[:3, :3]
-        t_lidar2cam = lidar2cam[:3, 3]
-        
+        Tr_velo2cam = lidar_info["Tr_velo2cam"]
         points = read_pcd(lidar_file_path)
         points[:, 3] = 1.0
-        camera_points = np.matmul(lidar2cam, points.T).T
+        camera_points = np.matmul(Tr_velo2cam, points.T).T
         virtual_points = np.matmul(cam2virtual, camera_points.T).T
         height_offsets = virtual_points[:, 1] - height_ref
         
