@@ -55,11 +55,30 @@ def equation_plane(points):
     d = (- a * x1 - b * y1 - c * z1)
     return np.array([a, b, c, d])
 
+def get_reference_height(denorm):
+    ref_height = np.abs(denorm[3]) / np.sqrt(denorm[0]**2 + denorm[1]**2 + denorm[2]**2)
+    return ref_height.astype(np.float32)
+
+def get_sensor2virtual(denorm):
+    origin_vector = np.array([0, 1, 0])    
+    target_vector = -1 * np.array([denorm[0], denorm[1], denorm[2]])
+    target_vector_norm = target_vector / np.sqrt(target_vector[0]**2 + target_vector[1]**2 + target_vector[2]**2)       
+    sita = math.acos(np.inner(target_vector_norm, origin_vector))
+    n_vector = np.cross(target_vector_norm, origin_vector) 
+    n_vector = n_vector / np.sqrt(n_vector[0]**2 + n_vector[1]**2 + n_vector[2]**2)
+    n_vector = n_vector.astype(np.float32)
+    rot_mat, _ = cv2.Rodrigues(n_vector * sita)
+    rot_mat = rot_mat.astype(np.float32)
+    sensor2virtual = np.eye(4)
+    sensor2virtual[:3, :3] = rot_mat
+    return sensor2virtual.astype(np.float32)
+
 def get_denorm(sweepego2sweepsensor):
     ground_points_lidar = np.array([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]])
     ground_points_lidar = np.concatenate((ground_points_lidar, np.ones((ground_points_lidar.shape[0], 1))), axis=1)
     ground_points_cam = np.matmul(sweepego2sweepsensor, ground_points_lidar.T).T
     denorm = -1 * equation_plane(ground_points_cam)
+    # denorm = equation_plane(ground_points_cam)
     return denorm
 
 def get_rot(h):
@@ -309,31 +328,6 @@ class NuscMVDetDataset(Dataset):
             flip_dx = False
             flip_dy = False
         return rotate_bda, scale_bda, flip_dx, flip_dy
-
-    def get_reference_height(self, denorm):
-        ref_height = np.abs(denorm[3]) / np.sqrt(denorm[0]**2 + denorm[1]**2 + denorm[2]**2)
-        return ref_height.astype(np.float32)
-    
-    def get_sensor2virtual(self, denorm):
-        origin_vector = np.array([0, 1, 0])    
-        target_vector = -1 * np.array([denorm[0], denorm[1], denorm[2]])
-        target_vector_norm = target_vector / np.sqrt(target_vector[0]**2 + target_vector[1]**2 + target_vector[2]**2)       
-        sita = math.acos(np.inner(target_vector_norm, origin_vector))
-        n_vector = np.cross(target_vector_norm, origin_vector) 
-        n_vector = n_vector / np.sqrt(n_vector[0]**2 + n_vector[1]**2 + n_vector[2]**2)
-        n_vector = n_vector.astype(np.float32)
-        rot_mat, _ = cv2.Rodrigues(n_vector * sita)
-        rot_mat = rot_mat.astype(np.float32)
-        sensor2virtual = np.eye(4)
-        sensor2virtual[:3, :3] = rot_mat
-        return sensor2virtual.astype(np.float32)
-    
-    def get_denorm(lidar2cam):
-        ground_points_lidar = np.array([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]])
-        ground_points_lidar = np.concatenate((ground_points_lidar, np.ones((ground_points_lidar.shape[0], 1))), axis=1)
-        ground_points_cam = np.matmul(lidar2cam, ground_points_lidar.T).T
-        denorm = -1 * equation_plane(ground_points_cam)
-        return denorm
     
     def get_image(self, cam_infos, cams):
         """Given data and cam_names, return image data needed.
@@ -394,7 +388,6 @@ class NuscMVDetDataset(Dataset):
                 
                 sweepego2sweepsensor = sweepsensor2sweepego.inverse()
                 denorm = get_denorm(sweepego2sweepsensor.numpy())
-                
                 # sweep ego to global
                 w, x, y, z = cam_info[cam]['ego_pose']['rotation']
                 sweepego2global_rot = torch.Tensor(
@@ -434,7 +427,7 @@ class NuscMVDetDataset(Dataset):
                     @ sweepsensor2sweepego).inverse()
                 sweepsensor2keyego = global2keyego @ sweepego2global @\
                     sweepsensor2sweepego
-                sensor2virtual = torch.Tensor(self.get_sensor2virtual(denorm))
+                sensor2virtual = torch.Tensor(get_sensor2virtual(denorm))
                 sensor2ego_mats.append(sweepsensor2keyego)
                 sensor2sensor_mats.append(keysensor2sweepsensor)
                 sensor2virtual_mats.append(sensor2virtual)
@@ -468,7 +461,7 @@ class NuscMVDetDataset(Dataset):
                 imgs.append(img)
                 intrin_mats.append(intrin_mat)
                 timestamps.append(cam_info[cam]['timestamp'])
-                reference_heights.append(self.get_reference_height(denorm))
+                reference_heights.append(get_reference_height(denorm))
                 
             sweep_imgs.append(torch.stack(imgs))
             sweep_sensor2ego_mats.append(torch.stack(sensor2ego_mats))

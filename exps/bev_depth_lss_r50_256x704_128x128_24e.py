@@ -34,7 +34,7 @@ backbone_conf = {
     'x_bound': [-51.2, 51.2, 0.8],
     'y_bound': [-51.2, 51.2, 0.8],
     'z_bound': [-5, 3, 8],
-    'd_bound': [-3.0, 5.0, 0.1],
+    'd_bound': [-3.0, 5.0, 0.05],
     'final_dim':
     final_dim,
     'output_channels':
@@ -456,7 +456,7 @@ def main(args: Namespace) -> None:
         pl.seed_everything(args.seed)
 
     model = BEVDepthLightningModel(**vars(args))
-    checkpoint_callback = ModelCheckpoint(dirpath="./outputs/bev_depth_lss_r50_256x704_128x128_24e/checkpoints", filename='{epoch}', every_n_epochs=2, save_top_k=-1)
+    checkpoint_callback = ModelCheckpoint(dirpath="./outputs/bev_depth_lss_r50_256x704_128x128_24e/checkpoints", filename='{epoch}', every_n_epochs=6, save_top_k=-1)
     trainer = pl.Trainer.from_argparse_args(args, callbacks=[checkpoint_callback])
     if args.evaluate:
         for ckpt_name in os.listdir(args.ckpt_path):
@@ -485,7 +485,7 @@ def run_cli():
     parser.set_defaults(
         profiler='simple',
         deterministic=False,
-        max_epochs=24,
+        max_epochs=48,
         accelerator='ddp',
         num_sanity_val_steps=0,
         gradient_clip_val=5,
@@ -495,7 +495,6 @@ def run_cli():
         default_root_dir='./outputs/bev_depth_lss_r50_256x704_128x128_24e')
     args = parser.parse_args()
     main(args)
-
 
 if __name__ == '__main__':
     run_cli()
