@@ -39,6 +39,7 @@ map_name_from_general_to_detection = {
     'static_object.bicycle_rack': 'ignore',
 }
 
+
 def equation_plane(points): 
     x1, y1, z1 = points[0, 0], points[0, 1], points[0, 2]
     x2, y2, z2 = points[1, 0], points[1, 1], points[1, 2]
@@ -55,9 +56,12 @@ def equation_plane(points):
     d = (- a * x1 - b * y1 - c * z1)
     return np.array([a, b, c, d])
 
-def get_reference_height(denorm):
-    ref_height = np.abs(denorm[3]) / np.sqrt(denorm[0]**2 + denorm[1]**2 + denorm[2]**2)
-    return ref_height.astype(np.float32)
+def get_denorm(sweepego2sweepsensor):
+    ground_points_lidar = np.array([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]])
+    ground_points_lidar = np.concatenate((ground_points_lidar, np.ones((ground_points_lidar.shape[0], 1))), axis=1)
+    ground_points_cam = np.matmul(sweepego2sweepsensor, ground_points_lidar.T).T
+    denorm = -1 * equation_plane(ground_points_cam)
+    return denorm
 
 def get_sensor2virtual(denorm):
     origin_vector = np.array([0, 1, 0])    
@@ -73,13 +77,9 @@ def get_sensor2virtual(denorm):
     sensor2virtual[:3, :3] = rot_mat
     return sensor2virtual.astype(np.float32)
 
-def get_denorm(sweepego2sweepsensor):
-    ground_points_lidar = np.array([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]])
-    ground_points_lidar = np.concatenate((ground_points_lidar, np.ones((ground_points_lidar.shape[0], 1))), axis=1)
-    ground_points_cam = np.matmul(sweepego2sweepsensor, ground_points_lidar.T).T
-    denorm = -1 * equation_plane(ground_points_cam)
-    # denorm = equation_plane(ground_points_cam)
-    return denorm
+def get_reference_height(denorm):
+    ref_height = np.abs(denorm[3]) / np.sqrt(denorm[0]**2 + denorm[1]**2 + denorm[2]**2)
+    return ref_height.astype(np.float32)
 
 def get_rot(h):
     return torch.Tensor([
@@ -431,7 +431,7 @@ class NuscMVDetDataset(Dataset):
                 sensor2ego_mats.append(sweepsensor2keyego)
                 sensor2sensor_mats.append(keysensor2sweepsensor)
                 sensor2virtual_mats.append(sensor2virtual)
-                
+
                 intrin_mat = torch.zeros((4, 4))
                 intrin_mat[3, 3] = 1
                 intrin_mat[:3, :3] = torch.Tensor(

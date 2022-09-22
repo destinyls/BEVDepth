@@ -220,14 +220,14 @@ class BEVDepthLightningModel(LightningModule):
                                             output_dir=self.default_root_dir)
         self.model = BEVDepth(self.backbone_conf,
                               self.head_conf,
-                              is_train_depth=False)
+                              is_train_depth=True)
         self.mode = 'valid'
         self.img_conf = img_conf
         self.data_use_cbgs = False
         self.num_sweeps = 1
         self.sweep_idxes = list()
         self.key_idxes = list()
-        self.data_return_depth = False
+        self.data_return_depth = True
         self.downsample_factor = self.backbone_conf['downsample_factor']
         self.dbound = self.backbone_conf['d_bound']
         self.depth_channels = int(

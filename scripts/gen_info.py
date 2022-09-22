@@ -4,7 +4,6 @@ from nuscenes.nuscenes import NuScenes
 from nuscenes.utils import splits
 from tqdm import tqdm
 
-
 def generate_info(nusc, scenes):
     infos = list()
     for cur_scene in tqdm(nusc.scene):

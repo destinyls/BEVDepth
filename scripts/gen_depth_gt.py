@@ -6,6 +6,9 @@ import numpy as np
 from nuscenes.utils.data_classes import LidarPointCloud
 from nuscenes.utils.geometry_utils import view_points
 from pyquaternion import Quaternion
+from tqdm import tqdm
+
+from dataset.nusc_mv_det_dataset import get_sensor2virtual, get_denorm, get_reference_height
 
 # from dataset.nusc_mv_det_dataset import get_denorm, get_reference_height, get_sensor2virtual
 
@@ -42,6 +45,21 @@ def map_pointcloud_to_image(
     pc.translate(-np.array(cam_calibrated_sensor['translation']))
     pc.rotate(Quaternion(cam_calibrated_sensor['rotation']).rotation_matrix.T)
 
+    w, x, y, z = cam_calibrated_sensor['rotation']
+    sensor2ego_rot = Quaternion(w, x, y, z).rotation_matrix
+    sensor2ego_tran = cam_calibrated_sensor['translation']
+    sensor2ego = np.eye(4)
+    sensor2ego[:3, :3] = sensor2ego_rot
+    sensor2ego[:3, 3] = sensor2ego_tran
+    ego2sensor = np.linalg.inv(sensor2ego)
+    denorm = get_denorm(ego2sensor)
+    sensor2virtual = get_sensor2virtual(denorm)
+    height_ref = get_reference_height(denorm)
+    
+    points_sensor = pc.points.copy()
+    points_sensor[3,:] = 1.0
+    points_virtual = np.matmul(sensor2virtual, points_sensor)
+    h_offsets = points_virtual[1, :] - height_ref
     # Fifth step: actually take a "picture" of the point cloud.
     # Grab the depths (camera frame z axis points away from the camera).
     depths = pc.points[2, :]
@@ -66,9 +84,9 @@ def map_pointcloud_to_image(
     mask = np.logical_and(mask, points[1, :] < im.shape[0] - 1)
     points = points[:, mask]
     coloring = coloring[mask]
+    h_offsets = h_offsets[mask]
 
-    return points, coloring
-
+    return points, coloring, h_offsets
 
 data_root = 'data/nuScenes'
 info_path = 'data/nuScenes/nuscenes_12hz_infos_train.pkl'
@@ -79,7 +97,6 @@ cam_keys = [
     'CAM_FRONT_LEFT', 'CAM_FRONT', 'CAM_FRONT_RIGHT', 'CAM_BACK_RIGHT',
     'CAM_BACK', 'CAM_BACK_LEFT'
 ]
-
 
 def worker(info):
     lidar_path = info['lidar_infos'][lidar_key]['filename']
@@ -94,13 +111,19 @@ def worker(info):
         cam_ego_pose = info['cam_infos'][cam_key]['ego_pose']
         img = mmcv.imread(
             os.path.join(data_root, info['cam_infos'][cam_key]['filename']))
-        pts_img, depth = map_pointcloud_to_image(
+        pts_img, depth, h_offsets = map_pointcloud_to_image(
             points.copy(), img, lidar_calibrated_sensor.copy(),
             lidar_ego_pose.copy(), cam_calibrated_sensor, cam_ego_pose)
         file_name = os.path.split(info['cam_infos'][cam_key]['filename'])[-1]
+        '''
         np.concatenate([pts_img[:2, :].T, depth[:, None]],
                        axis=1).astype(np.float32).flatten().tofile(
                            os.path.join(data_root, 'depth_gt',
+                                        f'{file_name}.bin'))
+        '''               
+        np.concatenate([pts_img[:2, :].T, h_offsets[:, None]],
+                       axis=1).astype(np.float32).flatten().tofile(
+                           os.path.join(data_root, 'height_gt',
                                         f'{file_name}.bin'))
     # plt.savefig(f"{sample_idx}")
 
@@ -108,9 +131,10 @@ def worker(info):
 if __name__ == '__main__':
     po = Pool(24)
     mmcv.mkdir_or_exist(os.path.join(data_root, 'depth_gt'))
+    mmcv.mkdir_or_exist(os.path.join(data_root, 'height_gt'))
     infos = mmcv.load(info_path)
     # import ipdb; ipdb.set_trace()
-    for info in infos:
+    for info in tqdm(infos):
         po.apply_async(func=worker, args=(info, ))
     po.close()
     po.join()
