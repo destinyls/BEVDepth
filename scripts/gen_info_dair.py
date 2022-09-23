@@ -39,6 +39,22 @@ def get_velo2cam(path):
     r_velo2cam = np.array(my_json["rotation"])
     return r_velo2cam, t_velo2cam
 
+def equation_plane(points): 
+    x1, y1, z1 = points[0, 0], points[0, 1], points[0, 2]
+    x2, y2, z2 = points[1, 0], points[1, 1], points[1, 2]
+    x3, y3, z3 = points[2, 0], points[2, 1], points[2, 2]
+    a1 = x2 - x1
+    b1 = y2 - y1
+    c1 = z2 - z1
+    a2 = x3 - x1
+    b2 = y3 - y1
+    c2 = z3 - z1
+    a = b1 * c2 - b2 * c1
+    b = a2 * c1 - a1 * c2
+    c = a1 * b2 - b1 * a2
+    d = (- a * x1 - b * y1 - c * z1)
+    return [a, b, c, d]
+
 def get_P(path):
     my_json = read_json(path)
     P = np.array(my_json["cam_K"]).reshape(3,3)
