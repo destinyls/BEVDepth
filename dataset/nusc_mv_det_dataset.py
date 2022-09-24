@@ -1,5 +1,6 @@
 import os
 import math
+import time
 import cv2
 
 import mmcv
@@ -412,14 +413,14 @@ class NuscMVDetDataset(Dataset):
                 intrin_mat[:2, 2] = intrin_mat[:2, 2] / 2.0 
                 sweepego2sweepsensor = sweepsensor2sweepego.inverse()
                 image = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2BGR)
-                if self.train:
-                    image, sweepego2sweepsensor_rectify, intrin_mat_rectify = self.image_rectify(image, sweepego2sweepsensor.numpy(), intrin_mat.numpy(), False, False, False)
+                if self.is_train:
+                    image, sweepego2sweepsensor_rectify, intrin_mat_rectify = self.image_rectify(image, sweepego2sweepsensor.numpy(), intrin_mat.numpy(), False, False, True)
                 else:
-                    image, sweepego2sweepsensor_rectify, intrin_mat_rectify = self.image_rectify(image, sweepego2sweepsensor.numpy(), intrin_mat.numpy(), False, False, False)
+                    image, sweepego2sweepsensor_rectify, intrin_mat_rectify = self.image_rectify(image, sweepego2sweepsensor.numpy(), intrin_mat.numpy(), False, False, True)
                 img = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
                 sweepsensor2sweepego = torch.Tensor(sweepego2sweepsensor_rectify).inverse()
                 intrin_mat = torch.Tensor(intrin_mat_rectify)
-
+                debug_dict = {"image": image, "sweepego2sweepsensor": sweepego2sweepsensor_rectify, "intrin_mat": intrin_mat_rectify}
                 # global sensor to cur ego
                 w, x, y, z = key_info[cam]['ego_pose']['rotation']
                 keyego2global_rot = torch.Tensor(
@@ -513,7 +514,7 @@ class NuscMVDetDataset(Dataset):
         ]
         if self.return_depth:
             ret_list.append(torch.stack(gt_depth))
-        return ret_list
+        return ret_list, debug_dict
 
     def get_gt(self, info, cams):
         """Generate gt labels from info.
@@ -606,7 +607,7 @@ class NuscMVDetDataset(Dataset):
                                 for cam in cams]) == len(cams):
                             cam_infos.append(info['sweeps'][i])
                             break
-        image_data_list = self.get_image(cam_infos, cams)
+        image_data_list, debug_dict = self.get_image(cam_infos, cams)
         ret_list = list()
         (
             sweep_imgs,
@@ -626,7 +627,9 @@ class NuscMVDetDataset(Dataset):
         else:
             gt_boxes = sweep_imgs.new_zeros(0, 7)
             gt_labels = sweep_imgs.new_zeros(0, )
-
+        image = self.visual_tool(debug_dict["image"], gt_boxes.numpy(), debug_dict["sweepego2sweepsensor"], debug_dict["intrin_mat"])
+        cv2.imwrite("debug_image.jpg", image)
+        time.sleep(5)
         rotate_bda, scale_bda, flip_dx, flip_dy = self.sample_bda_augmentation(
         )
         bda_mat = sweep_imgs.new_zeros(4, 4)

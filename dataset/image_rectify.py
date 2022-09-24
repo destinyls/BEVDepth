@@ -1,8 +1,10 @@
 import math
+import cv2
 import numpy as np
+from numba import jit
 
 class ImageRectify(object):
-    def __init__(self, image_shape, roll_range=[-2.0, 2.0], pitch_range=[-1.0, 1.0], ratio=0.95):
+    def __init__(self, image_shape, roll_range=[-1.0, 1.0], pitch_range=[-0.5, 0.5], ratio=0.30):
         self.roll_range = roll_range
         self.pitch_range = pitch_range
         self.ratio = ratio
@@ -41,10 +43,11 @@ class ImageRectify(object):
         return roll, pitch
     
     def rectify_cam_intrinsic(self, cam_intrinsic):
-        ratio = np.random.uniform(1.0, self.ratio)
+        # ratio = np.random.uniform(1.0, self.ratio)
+        ratio = 0.5
         cam_intrinsic_rectify = cam_intrinsic.copy()
         cam_intrinsic_rectify[:2,:2] = cam_intrinsic[:2,:2] * ratio
-        return cam_intrinsic_rectify
+        return cam_intrinsic_rectify, ratio
     
     def rectify_roll_params(self, lidar2cam, roll_status):
         target_roll_status = np.random.uniform(self.roll_range[0], self.roll_range[1])
@@ -56,7 +59,7 @@ class ImageRectify(object):
                                  [0, 0, 0, 1]])
         lidar2cam_rectify = np.matmul(rectify_roll, lidar2cam)
         return lidar2cam_rectify
-    
+
     def rectify_pitch_params(self, lidar2cam, pitch_status):
         target_pitch_status = np.random.uniform(pitch_status + self.pitch_range[0], pitch_status + self.pitch_range[1])            
         pitch = -1 * (target_pitch_status - pitch_status)
@@ -91,36 +94,43 @@ class ImageRectify(object):
         uvd = uvd.reshape(-1, 3)
         return uvd
     
+    def transfor_with_intrin(self, image, ratio):
+        new_image = np.zeros_like(image)
+        dim = (int(image.shape[1] * ratio), int(image.shape[0] * ratio))
+        crop_h = int(image.shape[0] * (1 - ratio) / 2)
+        crop_w = int(image.shape[1] * (1 - ratio) / 2)
+        resized = cv2.resize(image, dim, interpolation = cv2.INTER_AREA)
+        new_image[crop_h:crop_h + resized.shape[0], crop_w:crop_w + resized.shape[1], :] = resized
+        return new_image
+    
     def transform_with_M_bilinear(self, image, M):
         M = np.linalg.inv(M)
         uvd_new = np.matmul(M, self.uvd.T).T
         uv_new = uvd_new[:,:2] / (uvd_new[:,2][:, np.newaxis])
         uv_new_mask = uv_new.copy()
         uv_new_mask = uv_new_mask.reshape(image.shape[0], image.shape[1], 2)
-        
+    
         uv_new[:,0] = np.clip(uv_new[:,0], 0, image.shape[1]-2)
         uv_new[:,1] = np.clip(uv_new[:,1], 0, image.shape[0]-2)
-        uv_new = uv_new.reshape(image.shape[0], image.shape[1], 2)
+        uv_new = uv_new.reshape(image.shape[0], image.shape[1], 2, 1)
         
-        image_new = np.zeros_like(image)
         corr_x, corr_y = uv_new[:,:,1], uv_new[:,:,0]
-        point1 = np.concatenate((np.floor(corr_x)[:,:,np.newaxis].astype(np.int32), np.floor(corr_y)[:,:,np.newaxis].astype(np.int32)), axis=2)
-        point2 = np.concatenate((point1[:,:,0][:,:,np.newaxis], (point1[:,:,1]+1)[:,:,np.newaxis]), axis=2)
-        point3 = np.concatenate(((point1[:,:,0]+1)[:,:,np.newaxis], point1[:,:,1][:,:,np.newaxis]), axis=2)
-        point4 = np.concatenate(((point1[:,:,0]+1)[:,:,np.newaxis], (point1[:,:,1]+1)[:,:,np.newaxis]), axis=2)
+        point1 = np.concatenate((np.floor(corr_x).astype(np.int32), np.floor(corr_y).astype(np.int32)), axis=2)[:,:,:,np.newaxis]
+        point2 = np.concatenate((point1[:,:,0], (point1[:,:,1] + 1)), axis=2)[:,:,:,np.newaxis]
+        point3 = np.concatenate(((point1[:,:,0] + 1), point1[:,:,1]), axis=2)[:,:,:,np.newaxis]
+        point4 = np.concatenate(((point1[:,:,0] + 1), (point1[:,:,1] + 1)), axis=2)[:,:,:,np.newaxis]
 
-        fr1 = (point2[:,:,1]-corr_y)[:,:,np.newaxis] * image[point1[:,:,0], point1[:,:,1], :] + (corr_y-point1[:,:,1])[:,:,np.newaxis] * image[point2[:,:,0], point2[:,:,1], :]
-        fr2 = (point2[:,:,1]-corr_y)[:,:,np.newaxis] * image[point3[:,:,0], point3[:,:,1], :] + (corr_y-point1[:,:,1])[:,:,np.newaxis] * image[point4[:,:,0], point4[:,:,1], :]
-        image_new = (point3[:,:,0] - corr_x)[:,:,np.newaxis] * fr1 + (corr_x - point1[:,:,0])[:,:,np.newaxis] * fr2
+        fr1 = (point2[:,:,1] - corr_y) * image[point1[:,:,0,0], point1[:,:,1,0], :] + (corr_y - point1[:,:,1]) * image[point2[:,:,0,0], point2[:,:,1,0], :]
+        fr2 = (point2[:,:,1] - corr_y) * image[point3[:,:,0,0], point3[:,:,1,0], :] + (corr_y - point1[:,:,1]) * image[point4[:,:,0,0], point4[:,:,1,0], :]
+        image_new = (point3[:,:,0] - corr_x) * fr1 + (corr_x - point1[:,:,0]) * fr2
         
-        mask_1 = np.logical_or(uv_new_mask[:,:,0] < 0, uv_new_mask[:,:,0] > image.shape[1] -2)
-        mask_2 = np.logical_or(uv_new_mask[:,:,1] < 0, uv_new_mask[:,:,1] > image.shape[0] -2)
+        mask_1 = np.logical_or(uv_new_mask[:,:,0] < 0, uv_new_mask[:,:,0] > image.shape[1] - 2)
+        mask_2 = np.logical_or(uv_new_mask[:,:,1] < 0, uv_new_mask[:,:,1] > image.shape[0] - 2)
         mask = np.logical_or(mask_1, mask_2)
         image_new[mask] = [0,0,0]
-        image_new = image_new.astype(np.float32)
-        return image_new
+        return image_new.astype(np.uint8)
     
-    def __call__(self, image, lidar2cam, cam_intrinsic, is_pitch=False, is_roll=False, is_intrin=False):
+    def __call__(self, image, lidar2cam, cam_intrinsic, is_pitch=False, is_roll=False, is_intrin=True):
         roll_status, pitch_status = self.parse_roll_pitch(lidar2cam)
         lidar2cam_rectify, cam_intrinsic_rectify = lidar2cam, cam_intrinsic
         if is_pitch:
@@ -128,10 +138,11 @@ class ImageRectify(object):
         if is_roll:
             lidar2cam_rectify = self.rectify_pitch_params(lidar2cam_rectify, pitch_status)  
         if is_intrin:
-            cam_intrinsic_rectify = self.rectify_cam_intrinsic(cam_intrinsic)
-        M = self.get_M(lidar2cam[:3,:3], cam_intrinsic[:3,:3], lidar2cam_rectify[:3,:3], cam_intrinsic_rectify[:3,:3])
-        image = self.transform_with_M_bilinear(image, M)
-        return image.astype(np.uint8), lidar2cam_rectify, cam_intrinsic_rectify
+            cam_intrinsic_rectify, ratio = self.rectify_cam_intrinsic(cam_intrinsic)
+            image = self.transfor_with_intrin(image, ratio)
+        # M = self.get_M(lidar2cam[:3,:3], cam_intrinsic[:3,:3], lidar2cam_rectify[:3,:3], cam_intrinsic_rectify[:3,:3])
+        # image = self.transform_with_M_bilinear(image, M)
+        return image, lidar2cam_rectify, cam_intrinsic_rectify
 
 class ProduceHeightMap(object):
     def __init__(self, resolution=0.001):

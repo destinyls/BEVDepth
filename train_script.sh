@@ -1,2 +1,2 @@
 # CUDA_VISIBLE_DEVICES=0,1,2,3 python exps/bev_depth_lss_r50_256x704_128x128_24e.py --amp_backend native -b 4 --gpus 4
-CUDA_VISIBLE_DEVICES=0,1,2,3 python exps/bev_depth_lss_r50_256x704_128x128_24e.py --amp_backend native -b 8 --gpus 8
+CUDA_VISIBLE_DEVICES=0,1,2,3 python exps/bev_depth_lss_r50_256x704_128x128_24e.py --amp_backend native -b 4 --gpus 4

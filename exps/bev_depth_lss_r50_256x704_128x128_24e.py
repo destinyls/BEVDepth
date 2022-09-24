@@ -36,7 +36,7 @@ backbone_conf = {
     'x_bound': [-51.2, 51.2, 0.8],
     'y_bound': [-51.2, 51.2, 0.8],
     'z_bound': [-5, 3, 8],
-    'd_bound': [-3.0, 5.0, 0.05],
+    'd_bound': [-3.0, 5.0, 0.1],
     'final_dim':
     final_dim,
     'output_channels':
@@ -409,7 +409,7 @@ class BEVDepthLightningModel(LightningModule):
         train_loader = torch.utils.data.DataLoader(
             train_dataset,
             batch_size=self.batch_size_per_device,
-            num_workers=8,
+            num_workers=4,
             drop_last=True,
             shuffle=False,
             collate_fn=partial(collate_fn,
@@ -437,7 +437,7 @@ class BEVDepthLightningModel(LightningModule):
             batch_size=self.batch_size_per_device,
             shuffle=False,
             collate_fn=collate_fn,
-            num_workers=8,
+            num_workers=4,
             sampler=None,
         )
         return val_loader
