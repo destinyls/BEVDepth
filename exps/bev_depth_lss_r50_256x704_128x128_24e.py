@@ -23,8 +23,10 @@ from evaluators.det_mv_evaluators import DetMVNuscEvaluator
 from models.bev_depth import BEVDepth
 from utils.torch_dist import all_gather_object, get_rank, synchronize
 
-H = 900
-W = 1600
+# H = 900
+# W = 1600
+H = 450
+W = 800
 final_dim = (256, 704)
 img_conf = dict(img_mean=[123.675, 116.28, 103.53],
                 img_std=[58.395, 57.12, 57.375],
@@ -61,7 +63,7 @@ backbone_conf = {
     dict(in_channels=512, mid_channels=512)
 }
 ida_aug_conf = {
-    'resize_lim': (0.386, 0.55),
+    'resize_lim': (0.75, 1.0),
     'final_dim':
     final_dim,
     'rot_lim': (-5.4, 5.4),
@@ -220,14 +222,14 @@ class BEVDepthLightningModel(LightningModule):
                                             output_dir=self.default_root_dir)
         self.model = BEVDepth(self.backbone_conf,
                               self.head_conf,
-                              is_train_depth=True)
+                              is_train_depth=False)
         self.mode = 'valid'
         self.img_conf = img_conf
         self.data_use_cbgs = False
         self.num_sweeps = 1
         self.sweep_idxes = list()
         self.key_idxes = list()
-        self.data_return_depth = True
+        self.data_return_depth = False
         self.downsample_factor = self.backbone_conf['downsample_factor']
         self.dbound = self.backbone_conf['d_bound']
         self.depth_channels = int(
@@ -407,7 +409,7 @@ class BEVDepthLightningModel(LightningModule):
         train_loader = torch.utils.data.DataLoader(
             train_dataset,
             batch_size=self.batch_size_per_device,
-            num_workers=4,
+            num_workers=8,
             drop_last=True,
             shuffle=False,
             collate_fn=partial(collate_fn,
@@ -435,7 +437,7 @@ class BEVDepthLightningModel(LightningModule):
             batch_size=self.batch_size_per_device,
             shuffle=False,
             collate_fn=collate_fn,
-            num_workers=4,
+            num_workers=8,
             sampler=None,
         )
         return val_loader
@@ -462,7 +464,6 @@ def main(args: Namespace) -> None:
         for ckpt_name in os.listdir(args.ckpt_path):
             model_path = os.path.join(args.ckpt_path, ckpt_name)
             trainer.test(model, ckpt_path=model_path)
-            os.remove(model_path)
     else:
         trainer.fit(model)
 

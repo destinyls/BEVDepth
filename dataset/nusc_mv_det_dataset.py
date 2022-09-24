@@ -11,6 +11,8 @@ from PIL import Image
 from pyquaternion import Quaternion
 from torch.utils.data import Dataset
 
+from dataset.image_rectify import ImageRectify, ProduceHeightMap
+
 __all__ = ['NuscMVDetDataset']
 
 map_name_from_general_to_detection = {
@@ -250,6 +252,9 @@ class NuscMVDetDataset(Dataset):
         assert sum([key_idx < 0 for key_idx in key_idxes]) == len(key_idxes),\
             'All `key_idxes` must less than 0.'
         self.key_idxes = [0] + key_idxes
+        
+        self.image_rectify = ImageRectify(image_shape=[self.ida_aug_conf['H'],self.ida_aug_conf['W']])
+        self.visual_tool = ProduceHeightMap(resolution=0.1)
 
     def _get_sample_indices(self):
         """Load annotations from ann_file.
@@ -370,9 +375,9 @@ class NuscMVDetDataset(Dataset):
                 rotate_ida = self.sample_ida_augmentation(
                     )
             for sweep_idx, cam_info in enumerate(cam_infos):
-
                 img = Image.open(
                     os.path.join(self.data_root, cam_info[cam]['filename']))
+                img = img.resize((int(img.size[0] // 2), int(img.size[1] // 2)))
                 # img = Image.fromarray(img)
                 w, x, y, z = cam_info[cam]['calibrated_sensor']['rotation']
                 # sweep sensor to sweep ego
@@ -398,6 +403,21 @@ class NuscMVDetDataset(Dataset):
                 sweepego2global[3, 3] = 1
                 sweepego2global[:3, :3] = sweepego2global_rot
                 sweepego2global[:3, -1] = sweepego2global_tran
+                
+                intrin_mat = torch.zeros((4, 4))
+                intrin_mat[3, 3] = 1
+                intrin_mat[:3, :3] = torch.Tensor(
+                    cam_info[cam]['calibrated_sensor']['camera_intrinsic'])
+                intrin_mat[:2, :2] = intrin_mat[:2, :2] / 2.0
+                intrin_mat[:2, 2] = intrin_mat[:2, 2] / 2.0
+                
+                if self.is_train:
+                    sweepego2sweepsensor = sweepsensor2sweepego.inverse()
+                    image = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2BGR)
+                    image, sweepego2sweepsensor_rectify, intrin_mat_rectify = self.image_rectify(image, sweepego2sweepsensor.numpy(), intrin_mat.numpy())
+                    img = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+                    sweepsensor2sweepego = torch.Tensor(sweepego2sweepsensor_rectify).inverse()
+                    intrin_mat = torch.Tensor(intrin_mat_rectify)
 
                 # global sensor to cur ego
                 w, x, y, z = key_info[cam]['ego_pose']['rotation']
@@ -432,10 +452,6 @@ class NuscMVDetDataset(Dataset):
                 sensor2sensor_mats.append(keysensor2sweepsensor)
                 sensor2virtual_mats.append(sensor2virtual)
 
-                intrin_mat = torch.zeros((4, 4))
-                intrin_mat[3, 3] = 1
-                intrin_mat[:3, :3] = torch.Tensor(
-                    cam_info[cam]['calibrated_sensor']['camera_intrinsic'])
                 if self.return_depth and sweep_idx == 0:
                     file_name = os.path.split(cam_info[cam]['filename'])[-1]
                     point_depth = np.fromfile(os.path.join(
