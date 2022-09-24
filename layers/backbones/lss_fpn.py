@@ -339,7 +339,7 @@ class LSSFPN(nn.Module):
         points_virtual = combine_virtual.view(batch_size, num_cams, 1, 1, 1, 4, 4).matmul(points_const)
         ratio = height[:, :, :, :, :, 0] / points_virtual[:, :, :, :, :, 1, 0]
         ratio = ratio.view(batch_size, num_cams, ratio.shape[2], ratio.shape[3], ratio.shape[4], 1, 1).repeat(1, 1, 1, 1, 1, 4, 1)
-        points = points_virtual * ratio
+        points = points_virtual * torch.abs(ratio)
         points[:, :, :, :, :, 3, :] = 1
         combine_ego = sensor2ego_mat.matmul(torch.inverse(sensor2virtual_mat))
         points = combine_ego.view(batch_size, num_cams, 1, 1, 1, 4,

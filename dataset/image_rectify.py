@@ -120,14 +120,15 @@ class ImageRectify(object):
         image_new = image_new.astype(np.float32)
         return image_new
     
-    def __call__(self, image, lidar2cam, cam_intrinsic):
+    def __call__(self, image, lidar2cam, cam_intrinsic, is_pitch=False, is_roll=False, is_intrin=False):
         roll_status, pitch_status = self.parse_roll_pitch(lidar2cam)
-        lidar2cam_roll_rectify = self.rectify_roll_params(lidar2cam, roll_status)
-        lidar2cam_rectify = lidar2cam_roll_rectify
-        lidar2cam_pitch_rectify = self.rectify_pitch_params(lidar2cam_roll_rectify, pitch_status)            
-        lidar2cam_rectify = lidar2cam_pitch_rectify
-        cam_intrinsic_rectify = self.rectify_cam_intrinsic(cam_intrinsic)
-        
+        lidar2cam_rectify, cam_intrinsic_rectify = lidar2cam, cam_intrinsic
+        if is_pitch:
+            lidar2cam_rectify = self.rectify_roll_params(lidar2cam, roll_status)
+        if is_roll:
+            lidar2cam_rectify = self.rectify_pitch_params(lidar2cam_rectify, pitch_status)  
+        if is_intrin:
+            cam_intrinsic_rectify = self.rectify_cam_intrinsic(cam_intrinsic)
         M = self.get_M(lidar2cam[:3,:3], cam_intrinsic[:3,:3], lidar2cam_rectify[:3,:3], cam_intrinsic_rectify[:3,:3])
         image = self.transform_with_M_bilinear(image, M)
         return image.astype(np.uint8), lidar2cam_rectify, cam_intrinsic_rectify
