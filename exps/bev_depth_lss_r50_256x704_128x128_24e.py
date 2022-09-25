@@ -2,7 +2,6 @@
 from argparse import ArgumentParser, Namespace
 
 import os
-from tabnanny import check
 import mmcv
 import pytorch_lightning as pl
 import torch
@@ -23,10 +22,8 @@ from evaluators.det_mv_evaluators import DetMVNuscEvaluator
 from models.bev_depth import BEVDepth
 from utils.torch_dist import all_gather_object, get_rank, synchronize
 
-# H = 900
-# W = 1600
-H = 450
-W = 800
+H = 900
+W = 1600
 final_dim = (256, 704)
 img_conf = dict(img_mean=[123.675, 116.28, 103.53],
                 img_std=[58.395, 57.12, 57.375],
@@ -458,7 +455,7 @@ def main(args: Namespace) -> None:
         pl.seed_everything(args.seed)
 
     model = BEVDepthLightningModel(**vars(args))
-    checkpoint_callback = ModelCheckpoint(dirpath="./outputs/bev_depth_lss_r50_256x704_128x128_24e/checkpoints", filename='{epoch}', every_n_epochs=6, save_top_k=-1)
+    checkpoint_callback = ModelCheckpoint(dirpath="./outputs/bev_depth_lss_r50_256x704_128x128_24e/checkpoints", filename='{epoch}', every_n_epochs=4, save_top_k=-1)
     trainer = pl.Trainer.from_argparse_args(args, callbacks=[checkpoint_callback])
     if args.evaluate:
         for ckpt_name in os.listdir(args.ckpt_path):

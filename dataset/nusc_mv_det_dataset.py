@@ -378,7 +378,6 @@ class NuscMVDetDataset(Dataset):
             for sweep_idx, cam_info in enumerate(cam_infos):
                 img = Image.open(
                     os.path.join(self.data_root, cam_info[cam]['filename']))
-                img = img.resize((int(img.size[0] // 2), int(img.size[1] // 2)))
                 # img = Image.fromarray(img)
                 w, x, y, z = cam_info[cam]['calibrated_sensor']['rotation']
                 # sweep sensor to sweep ego
@@ -409,8 +408,7 @@ class NuscMVDetDataset(Dataset):
                 intrin_mat[3, 3] = 1
                 intrin_mat[:3, :3] = torch.Tensor(
                     cam_info[cam]['calibrated_sensor']['camera_intrinsic'])
-                intrin_mat[:2, :2] = intrin_mat[:2, :2] / 2.0
-                intrin_mat[:2, 2] = intrin_mat[:2, 2] / 2.0 
+                
                 sweepego2sweepsensor = sweepsensor2sweepego.inverse()
                 image = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2BGR)
                 if self.is_train:
@@ -420,7 +418,7 @@ class NuscMVDetDataset(Dataset):
                 img = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
                 sweepsensor2sweepego = torch.Tensor(sweepego2sweepsensor_rectify).inverse()
                 intrin_mat = torch.Tensor(intrin_mat_rectify)
-                debug_dict = {"image": image, "sweepego2sweepsensor": sweepego2sweepsensor_rectify, "intrin_mat": intrin_mat_rectify}
+                
                 # global sensor to cur ego
                 w, x, y, z = key_info[cam]['ego_pose']['rotation']
                 keyego2global_rot = torch.Tensor(
@@ -514,7 +512,7 @@ class NuscMVDetDataset(Dataset):
         ]
         if self.return_depth:
             ret_list.append(torch.stack(gt_depth))
-        return ret_list, debug_dict
+        return ret_list
 
     def get_gt(self, info, cams):
         """Generate gt labels from info.
@@ -607,7 +605,7 @@ class NuscMVDetDataset(Dataset):
                                 for cam in cams]) == len(cams):
                             cam_infos.append(info['sweeps'][i])
                             break
-        image_data_list, debug_dict = self.get_image(cam_infos, cams)
+        image_data_list = self.get_image(cam_infos, cams)
         ret_list = list()
         (
             sweep_imgs,
@@ -622,14 +620,14 @@ class NuscMVDetDataset(Dataset):
         ) = image_data_list[:9]
         img_metas['token'] = self.infos[idx]['sample_token']
         if self.is_train:
-            gt_boxes, gt_labels = self.get_gt(self.infos[idx], cams)
+            gt_boxes = self.get_gt(self.infos[idx], cams)
         # Temporary solution for test.
         else:
             gt_boxes = sweep_imgs.new_zeros(0, 7)
             gt_labels = sweep_imgs.new_zeros(0, )
-        image = self.visual_tool(debug_dict["image"], gt_boxes.numpy(), debug_dict["sweepego2sweepsensor"], debug_dict["intrin_mat"])
-        cv2.imwrite("debug_image.jpg", image)
-        time.sleep(5)
+        # image = self.visual_tool(debug_dict["image"], gt_boxes.numpy(), debug_dict["sweepego2sweepsensor"], debug_dict["intrin_mat"])
+        # cv2.imwrite("debug_image.jpg", image)
+        # time.sleep(5)
         rotate_bda, scale_bda, flip_dx, flip_dy = self.sample_bda_augmentation(
         )
         bda_mat = sweep_imgs.new_zeros(4, 4)
