@@ -412,9 +412,9 @@ class NuscMVDetDataset(Dataset):
                 sweepego2sweepsensor = sweepsensor2sweepego.inverse()
                 image = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2BGR)
                 if self.is_train:
-                    image, sweepego2sweepsensor_rectify, intrin_mat_rectify = self.image_rectify(image, sweepego2sweepsensor.numpy(), intrin_mat.numpy(), False, False, True)
+                    image, sweepego2sweepsensor_rectify, intrin_mat_rectify = self.image_rectify(image, sweepego2sweepsensor.numpy(), intrin_mat.numpy(), True, True)
                 else:
-                    image, sweepego2sweepsensor_rectify, intrin_mat_rectify = self.image_rectify(image, sweepego2sweepsensor.numpy(), intrin_mat.numpy(), False, False, True)
+                    image, sweepego2sweepsensor_rectify, intrin_mat_rectify = self.image_rectify(image, sweepego2sweepsensor.numpy(), intrin_mat.numpy(), False, False)
                 img = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
                 sweepsensor2sweepego = torch.Tensor(sweepego2sweepsensor_rectify).inverse()
                 intrin_mat = torch.Tensor(intrin_mat_rectify)
@@ -620,7 +620,7 @@ class NuscMVDetDataset(Dataset):
         ) = image_data_list[:9]
         img_metas['token'] = self.infos[idx]['sample_token']
         if self.is_train:
-            gt_boxes = self.get_gt(self.infos[idx], cams)
+            gt_boxes, gt_labels = self.get_gt(self.infos[idx], cams)
         # Temporary solution for test.
         else:
             gt_boxes = sweep_imgs.new_zeros(0, 7)

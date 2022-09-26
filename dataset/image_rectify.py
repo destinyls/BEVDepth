@@ -4,7 +4,7 @@ import numpy as np
 from numba import jit
 
 class ImageRectify(object):
-    def __init__(self, image_shape, roll_range=[-2.0, 2.0], pitch_range=[-0.5, 0.5], ratio=0.95):
+    def __init__(self, image_shape, roll_range=[-1.5, 1.5], pitch_range=[-0.5, 0.5], ratio=[0.95, 1.05]):
         self.roll_range = roll_range
         self.pitch_range = pitch_range
         self.ratio = ratio
@@ -43,7 +43,7 @@ class ImageRectify(object):
         return roll, pitch
     
     def rectify_cam_intrinsic(self, cam_intrinsic):
-        ratio = np.random.uniform(1.0, self.ratio)
+        ratio = np.random.uniform(self.ratio[0], self.ratio[1])
         cam_intrinsic_rectify = cam_intrinsic.copy()
         cam_intrinsic_rectify[:2,:2] = cam_intrinsic[:2,:2] * ratio
         return cam_intrinsic_rectify, ratio
@@ -85,7 +85,7 @@ class ImageRectify(object):
         M = np.matmul(M, K_inv)
         return M
     
-    def init_uvd(self, image_shape=[432, 768]):
+    def init_uvd(self, image_shape):
         u = range(image_shape[1])
         v = range(image_shape[0])
         xu, yv = np.meshgrid(u, v)
@@ -97,10 +97,13 @@ class ImageRectify(object):
     def transfor_with_intrin(self, image, ratio, center):
         new_image = np.zeros_like(image)
         dim = (int(image.shape[1] * ratio), int(image.shape[0] * ratio)) # w, h
-        h_min = int(center[1] * (1 - ratio))
-        w_min = int(center[0] * (1 - ratio))
         resized = cv2.resize(image, dim, interpolation = cv2.INTER_AREA)
-        new_image[h_min:h_min + dim[1], w_min:w_min + dim[0], :] = resized
+        h_min = int(center[1] * abs(1.0 - ratio))
+        w_min = int(center[0] * abs(1.0 - ratio))
+        if ratio <= 1.0: 
+            new_image[h_min:h_min + dim[1], w_min:w_min + dim[0], :] = resized
+        else:
+            new_image = resized[h_min: h_min + image.shape[0], w_min: w_min + image.shape[1], :]
         return new_image
     
     def transfor_with_roll(self, image, center, roll_rad):
@@ -110,8 +113,17 @@ class ImageRectify(object):
         new_image = cv2.warpAffine(image, M, (w, h), flags=cv2.INTER_CUBIC)
         return new_image
     
-    def transfor_with_pitch(self, image, center, roll_rad):
-        print("TODO")
+    def transfor_with_pitch(self, image, lidar2cam, lidar2cam_rectify, cam_intrinsic):
+        ref_pixel = np.array([[540, 100, 1.0, 1.0], [540, 200, 1.0, 1.0], [540, 500, 1.0, 1.0]])
+        
+        cam_intrinsic_inv = np.linalg.inv(cam_intrinsic)
+        cam2lidar = np.linalg.inv(lidar2cam)
+        ref_points_cam = np.matmul(cam_intrinsic_inv, ref_pixel.T)
+        ref_points_lidar = np.matmul(cam2lidar, ref_points_cam)
+                
+        ref_points_cam = np.matmul(lidar2cam_rectify, ref_points_lidar)
+        ref_points_img = np.matmul(cam_intrinsic, ref_points_cam).T
+        ref_pixel_rectify = ref_points_img[:, :2] / ref_points_img[:, 2][:, np.newaxis]
         return image
     
     def transform_with_M_bilinear(self, image, M):
@@ -141,18 +153,16 @@ class ImageRectify(object):
         image_new[mask] = [0,0,0]
         return image_new.astype(np.uint8)
     
-    def __call__(self, image, lidar2cam, cam_intrinsic, is_pitch=False, is_roll=True, is_intrin=True):
-        roll_status, pitch_status = self.parse_roll_pitch(lidar2cam)
+    def __call__(self, image, lidar2cam, cam_intrinsic, is_roll=False, is_intrin=False):
+        roll_status, _ = self.parse_roll_pitch(lidar2cam)
         center = cam_intrinsic[:2, 2].astype(np.int32)  # w, h
         lidar2cam_rectify, cam_intrinsic_rectify = lidar2cam, cam_intrinsic
         if is_intrin:
             cam_intrinsic_rectify, ratio = self.rectify_cam_intrinsic(cam_intrinsic)
             image = self.transfor_with_intrin(image, ratio, center)
         if is_roll:
-            lidar2cam_rectify, roll_rad = self.rectify_roll_params(lidar2cam_rectify, pitch_status)  
+            lidar2cam_rectify, roll_rad = self.rectify_roll_params(lidar2cam_rectify, roll_status)  
             image = self.transfor_with_roll(image, center, roll_rad)
-        if is_pitch:
-            lidar2cam_rectify = self.rectify_roll_params(lidar2cam, roll_status)
         # M = self.get_M(lidar2cam[:3,:3], cam_intrinsic[:3,:3], lidar2cam_rectify[:3,:3], cam_intrinsic_rectify[:3,:3])
         # image = self.transform_with_M_bilinear(image, M)
         return image, lidar2cam_rectify, cam_intrinsic_rectify
