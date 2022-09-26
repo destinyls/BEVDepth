@@ -1,5 +1,6 @@
 import os
 import math
+import time
 import cv2
 
 import mmcv
@@ -11,7 +12,7 @@ from PIL import Image
 from pyquaternion import Quaternion
 from torch.utils.data import Dataset
 
-from scripts.gen_info_dair import equation_plane
+from dataset.image_rectify import ImageRectify, ProduceHeightMap
 
 __all__ = ['NuscMVDetDataset']
 
@@ -41,12 +42,71 @@ map_name_from_general_to_detection = {
     'static_object.bicycle_rack': 'ignore',
 }
 
+
+def equation_plane(points): 
+    x1, y1, z1 = points[0, 0], points[0, 1], points[0, 2]
+    x2, y2, z2 = points[1, 0], points[1, 1], points[1, 2]
+    x3, y3, z3 = points[2, 0], points[2, 1], points[2, 2]
+    a1 = x2 - x1
+    b1 = y2 - y1
+    c1 = z2 - z1
+    a2 = x3 - x1
+    b2 = y3 - y1
+    c2 = z3 - z1
+    a = b1 * c2 - b2 * c1
+    b = a2 * c1 - a1 * c2
+    c = a1 * b2 - b1 * a2
+    d = (- a * x1 - b * y1 - c * z1)
+    return np.array([a, b, c, d])
+
+def get_denorm(sweepego2sweepsensor):
+    ground_points_lidar = np.array([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]])
+    ground_points_lidar = np.concatenate((ground_points_lidar, np.ones((ground_points_lidar.shape[0], 1))), axis=1)
+    ground_points_cam = np.matmul(sweepego2sweepsensor, ground_points_lidar.T).T
+    denorm = -1 * equation_plane(ground_points_cam)
+    return denorm
+
+def get_sensor2virtual(denorm):
+    origin_vector = np.array([0, 1, 0])    
+    target_vector = -1 * np.array([denorm[0], denorm[1], denorm[2]])
+    target_vector_norm = target_vector / np.sqrt(target_vector[0]**2 + target_vector[1]**2 + target_vector[2]**2)       
+    sita = math.acos(np.inner(target_vector_norm, origin_vector))
+    n_vector = np.cross(target_vector_norm, origin_vector) 
+    n_vector = n_vector / np.sqrt(n_vector[0]**2 + n_vector[1]**2 + n_vector[2]**2)
+    n_vector = n_vector.astype(np.float32)
+    rot_mat, _ = cv2.Rodrigues(n_vector * sita)
+    rot_mat = rot_mat.astype(np.float32)
+    sensor2virtual = np.eye(4)
+    sensor2virtual[:3, :3] = rot_mat
+    return sensor2virtual.astype(np.float32)
+
+def get_reference_height(denorm):
+    ref_height = np.abs(denorm[3]) / np.sqrt(denorm[0]**2 + denorm[1]**2 + denorm[2]**2)
+    return ref_height.astype(np.float32)
+
 def get_rot(h):
     return torch.Tensor([
         [np.cos(h), np.sin(h)],
         [-np.sin(h), np.cos(h)],
     ])
 
+def img_intrin_extrin_transform(img, ratio, roll, intrin_mat):
+    center = intrin_mat[:2, 2].astype(np.int32) 
+    center = (int(center[0]), int(center[1]))
+
+    W, H = img.size[0], img.size[1]
+    new_W, new_H = (int(W * ratio), int(H * ratio))
+    img = img.resize((new_W, new_H), Image.ANTIALIAS)
+    
+    h_min = int(center[1] * abs(1.0 - ratio))
+    w_min = int(center[0] * abs(1.0 - ratio))
+    if ratio <= 1.0:
+        image = Image.new(mode='RGB', size=(W, H))
+        image.paste(img, (w_min, h_min,  w_min + new_W, h_min + new_H))
+    else:
+        image = img.crop((w_min, h_min,  w_min + W, h_min + H))
+    img = image.rotate(-roll, expand=0, center=center, fillcolor=(0,0,0))
+    return img
 
 def img_transform(img, resize, resize_dims, crop, flip, rotate):
     ida_rot = torch.eye(2)
@@ -153,6 +213,7 @@ def depth_transform(cam_depth, resize, resize_dims, crop, flip, rotate):
 
     return torch.Tensor(depth_map)
 
+
 class NuscMVDetDataset(Dataset):
     def __init__(self,
                  ida_aug_conf,
@@ -188,7 +249,6 @@ class NuscMVDetDataset(Dataset):
         """
         super().__init__()
         self.infos = mmcv.load(info_path)
-        
         self.is_train = is_train
         self.ida_aug_conf = ida_aug_conf
         self.bda_aug_conf = bda_aug_conf
@@ -211,6 +271,16 @@ class NuscMVDetDataset(Dataset):
         assert sum([key_idx < 0 for key_idx in key_idxes]) == len(key_idxes),\
             'All `key_idxes` must less than 0.'
         self.key_idxes = [0] + key_idxes
+        
+        self.image_rectify = ImageRectify(image_shape=[self.ida_aug_conf['H'],self.ida_aug_conf['W']])
+        self.visual_tool = ProduceHeightMap(resolution=0.05)
+
+        self.cache_flag = False
+        self.cache_flag_index = -1
+        self.cache_bda_augmentation = None
+
+        self.ratio_range = [0.95, 1.0]
+        self.roll_range = [-5.4, 5.4]
 
     def _get_sample_indices(self):
         """Load annotations from ann_file.
@@ -238,6 +308,7 @@ class NuscMVDetDataset(Dataset):
         }
 
         sample_indices = []
+
         frac = 1.0 / len(self.classes)
         ratios = [frac / v for v in class_distribution.values()]
         for cls_inds, ratio in zip(list(class_sample_idxs.values()), ratios):
@@ -246,11 +317,34 @@ class NuscMVDetDataset(Dataset):
                                                    ratio)).tolist()
         return sample_indices
 
+    def degree2rad(self, degree):
+        return degree * np.pi / 180
+
+    def sample_intrin_extrin_augmentation(self, intrin_mat, sweepego2sweepsensor):
+        intrin_mat, sweepego2sweepsensor = intrin_mat.numpy(), sweepego2sweepsensor.numpy()
+        # rectify intrin_mat
+        ratio = np.random.uniform(self.ratio_range[0], self.ratio_range[1])
+        ratio = 1.0
+        intrin_mat_rectify = intrin_mat.copy()
+        intrin_mat_rectify[:2,:2] = intrin_mat[:2,:2] * ratio
+        
+        # rectify sweepego2sweepsensor
+        roll = np.random.uniform(self.roll_range[0], self.roll_range[1])
+        roll = 10.0
+        roll_rad = self.degree2rad(roll)
+        rectify_roll = np.array([[math.cos(roll_rad), -math.sin(roll_rad), 0, 0], 
+                                 [math.sin(roll_rad), math.cos(roll_rad), 0, 0], 
+                                 [0, 0, 1, 0],
+                                 [0, 0, 0, 1]])
+        sweepego2sweepsensor_rectify = np.matmul(rectify_roll, sweepego2sweepsensor)
+        intrin_mat_rectify, sweepego2sweepsensor_rectify = torch.Tensor(intrin_mat_rectify), torch.Tensor(sweepego2sweepsensor_rectify)
+        return intrin_mat_rectify, sweepego2sweepsensor_rectify, ratio, roll
+
     def sample_ida_augmentation(self):
         """Generate ida augmentation values based on ida_config."""
         H, W = self.ida_aug_conf['H'], self.ida_aug_conf['W']
         fH, fW = self.ida_aug_conf['final_dim']
-        if self.is_train and False:
+        if self.is_train:
             resize = np.random.uniform(*self.ida_aug_conf['resize_lim'])
             resize_dims = (int(W * resize), int(H * resize))
             newW, newH = resize_dims
@@ -277,7 +371,7 @@ class NuscMVDetDataset(Dataset):
 
     def sample_bda_augmentation(self):
         """Generate bda augmentation values based on bda_config."""
-        if self.is_train and False:
+        if self.is_train:
             rotate_bda = np.random.uniform(*self.bda_aug_conf['rot_lim'])
             scale_bda = np.random.uniform(*self.bda_aug_conf['scale_lim'])
             flip_dx = np.random.uniform() < self.bda_aug_conf['flip_dx_ratio']
@@ -289,31 +383,6 @@ class NuscMVDetDataset(Dataset):
             flip_dy = False
         return rotate_bda, scale_bda, flip_dx, flip_dy
     
-    def get_reference_height(self, denorm):
-        ref_height = np.abs(denorm[3]) / np.sqrt(denorm[0]**2 + denorm[1]**2 + denorm[2]**2)
-        return ref_height.astype(np.float32)
-    
-    def get_sensor2virtual(self, denorm):
-        origin_vector = np.array([0, 1, 0])    
-        target_vector = -1 * np.array([denorm[0], denorm[1], denorm[2]])
-        target_vector_norm = target_vector / np.sqrt(target_vector[0]**2 + target_vector[1]**2 + target_vector[2]**2)       
-        sita = math.acos(np.inner(target_vector_norm, origin_vector))
-        n_vector = np.cross(target_vector_norm, origin_vector) 
-        n_vector = n_vector / np.sqrt(n_vector[0]**2 + n_vector[1]**2 + n_vector[2]**2)
-        n_vector = n_vector.astype(np.float32)
-        rot_mat, _ = cv2.Rodrigues(n_vector * sita)
-        rot_mat = rot_mat.astype(np.float32)
-        sensor2virtual = np.eye(4)
-        sensor2virtual[:3, :3] = rot_mat
-        return sensor2virtual.astype(np.float32)
-    
-    def get_denorm(lidar2cam):
-        ground_points_lidar = np.array([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]])
-        ground_points_lidar = np.concatenate((ground_points_lidar, np.ones((ground_points_lidar.shape[0], 1))), axis=1)
-        ground_points_cam = np.matmul(lidar2cam, ground_points_lidar.T).T
-        denorm = -1 * equation_plane(ground_points_cam)
-        return denorm
-
     def get_image(self, cam_infos, cams):
         """Given data and cam_names, return image data needed.
 
@@ -365,7 +434,6 @@ class NuscMVDetDataset(Dataset):
                     # sweep sensor to sweep ego
                     sweepsensor2sweepego_rot = torch.Tensor(
                         Quaternion(w, x, y, z).rotation_matrix)
-        
                 sweepsensor2sweepego_tran = torch.Tensor(
                     cam_info[cam]['calibrated_sensor']['translation'])
                 sweepsensor2sweepego = sweepsensor2sweepego_rot.new_zeros(
@@ -373,6 +441,9 @@ class NuscMVDetDataset(Dataset):
                 sweepsensor2sweepego[3, 3] = 1
                 sweepsensor2sweepego[:3, :3] = sweepsensor2sweepego_rot
                 sweepsensor2sweepego[:3, -1] = sweepsensor2sweepego_tran
+                
+                sweepego2sweepsensor = sweepsensor2sweepego.inverse()
+                denorm = get_denorm(sweepego2sweepsensor.numpy())
                 # sweep ego to global
                 w, x, y, z = cam_info[cam]['ego_pose']['rotation']
                 sweepego2global_rot = torch.Tensor(
@@ -383,7 +454,29 @@ class NuscMVDetDataset(Dataset):
                 sweepego2global[3, 3] = 1
                 sweepego2global[:3, :3] = sweepego2global_rot
                 sweepego2global[:3, -1] = sweepego2global_tran
+                
+                intrin_mat = torch.zeros((4, 4))
+                intrin_mat[3, 3] = 1
+                intrin_mat[:3, :3] = torch.Tensor(
+                    cam_info[cam]['calibrated_sensor']['camera_intrinsic'])
+                
+                sweepego2sweepsensor = sweepsensor2sweepego.inverse()
+                '''
+                if self.is_train:
+                    intrin_mat, sweepego2sweepsensor, ratio, roll = self.sample_intrin_extrin_augmentation(intrin_mat, sweepego2sweepsensor)
+                    img = img_intrin_extrin_transform(img, ratio, roll, intrin_mat.numpy())
+                '''
+                if self.is_train:
+                    img, sweepego2sweepsensor, intrin_mat = self.image_rectify(img, sweepego2sweepsensor, intrin_mat, True, True, True)
+                else:
+                    img, sweepego2sweepsensor, intrin_mat = self.image_rectify(img, sweepego2sweepsensor, intrin_mat, False, False, False)
+                
+                denorm = get_denorm(sweepego2sweepsensor.numpy())
+                sweepsensor2sweepego = sweepego2sweepsensor.inverse()
 
+                # image = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2BGR)
+                # debug_dict = {"image": image, "sweepego2sweepsensor":sweepego2sweepsensor.numpy(), "intrin_mat":intrin_mat.numpy()}
+                
                 # global sensor to cur ego
                 w, x, y, z = key_info[cam]['ego_pose']['rotation']
                 keyego2global_rot = torch.Tensor(
@@ -400,8 +493,7 @@ class NuscMVDetDataset(Dataset):
                 if "rotation_matrix" in key_info[cam]['calibrated_sensor'].keys():
                     keysensor2keyego_rot = torch.Tensor(key_info[cam]['calibrated_sensor']['rotation_matrix'])
                 else:
-                    w, x, y, z = key_info[cam]['calibrated_sensor']['rotation']
-                    # sweep sensor to sweep ego
+                    w, x, y, z = key_info[cam]['calibrated_sensor']['rotation']                    
                     keysensor2keyego_rot = torch.Tensor(
                         Quaternion(w, x, y, z).rotation_matrix)
                 keysensor2keyego_tran = torch.Tensor(
@@ -411,21 +503,16 @@ class NuscMVDetDataset(Dataset):
                 keysensor2keyego[:3, :3] = keysensor2keyego_rot
                 keysensor2keyego[:3, -1] = keysensor2keyego_tran
                 keyego2keysensor = keysensor2keyego.inverse()
-                
                 keysensor2sweepsensor = (
                     keyego2keysensor @ global2keyego @ sweepego2global
                     @ sweepsensor2sweepego).inverse()
                 sweepsensor2keyego = global2keyego @ sweepego2global @\
                     sweepsensor2sweepego
-                
-                sensor2virtual = torch.Tensor(self.get_sensor2virtual(cam_info[cam]['denorm']))
+                sensor2virtual = torch.Tensor(get_sensor2virtual(denorm))
                 sensor2ego_mats.append(sweepsensor2keyego)
                 sensor2sensor_mats.append(keysensor2sweepsensor)
                 sensor2virtual_mats.append(sensor2virtual)
-                intrin_mat = torch.zeros((4, 4))
-                intrin_mat[3, 3] = 1
-                intrin_mat[:3, :3] = torch.Tensor(
-                    cam_info[cam]['calibrated_sensor']['camera_intrinsic'])
+
                 if self.return_depth and sweep_idx == 0:
                     file_name = os.path.split(cam_info[cam]['filename'])[-1]
                     point_depth = np.fromfile(os.path.join(
@@ -451,7 +538,7 @@ class NuscMVDetDataset(Dataset):
                 imgs.append(img)
                 intrin_mats.append(intrin_mat)
                 timestamps.append(cam_info[cam]['timestamp'])
-                reference_heights.append(self.get_reference_height(cam_info[cam]['denorm']))
+                reference_heights.append(get_reference_height(denorm))
                 
             sweep_imgs.append(torch.stack(imgs))
             sweep_sensor2ego_mats.append(torch.stack(sensor2ego_mats))
@@ -461,6 +548,7 @@ class NuscMVDetDataset(Dataset):
             sweep_sensor2virtual_mats.append(torch.stack(sensor2virtual_mats))
             sweep_timestamps.append(torch.tensor(timestamps))
             sweep_reference_heights.append(torch.tensor(reference_heights))
+            
         # Get mean pose of all cams.
         ego2global_rotation = np.mean(
             [key_info[cam]['ego_pose']['rotation'] for cam in cams], 0)
@@ -485,7 +573,8 @@ class NuscMVDetDataset(Dataset):
         ]
         if self.return_depth:
             ret_list.append(torch.stack(gt_depth))
-        return ret_list
+        # return ret_list, debug_dict
+        return ret_list, None
 
     def get_gt(self, info, cams):
         """Generate gt labels from info.
@@ -550,6 +639,8 @@ class NuscMVDetDataset(Dataset):
         return cams
 
     def __getitem__(self, idx):
+        if self.cache_flag and self.is_train:
+            idx = self.cache_flag_index
         if self.use_cbgs:
             idx = self.sample_indices[idx]
         cam_infos = list()
@@ -578,7 +669,7 @@ class NuscMVDetDataset(Dataset):
                                 for cam in cams]) == len(cams):
                             cam_infos.append(info['sweeps'][i])
                             break
-        image_data_list = self.get_image(cam_infos, cams)
+        image_data_list, debug_dict = self.get_image(cam_infos, cams)
         ret_list = list()
         (
             sweep_imgs,
@@ -598,9 +689,22 @@ class NuscMVDetDataset(Dataset):
         else:
             gt_boxes = sweep_imgs.new_zeros(0, 7)
             gt_labels = sweep_imgs.new_zeros(0, )
+        # image = self.visual_tool(debug_dict["image"], gt_boxes.numpy(), debug_dict["sweepego2sweepsensor"], debug_dict["intrin_mat"])
+        # cv2.imwrite("debug_image.jpg", image)
+        # time.sleep(20)
+        if self.cache_flag and self.is_train:
+            rotate_bda, scale_bda, flip_dx, flip_dy = self.cache_bda_augmentation
+            self.cache_flag = False
+        elif self.is_train:
+            self.cache_bda_augmentation = self.sample_bda_augmentation(
+            )
+            rotate_bda, scale_bda, flip_dx, flip_dy = self.cache_bda_augmentation
+            self.cache_flag = True
+            self.cache_flag_index = idx
+        else:
+            rotate_bda, scale_bda, flip_dx, flip_dy = self.sample_bda_augmentation(
+            )
 
-        rotate_bda, scale_bda, flip_dx, flip_dy = self.sample_bda_augmentation(
-        )
         bda_mat = sweep_imgs.new_zeros(4, 4)
         bda_mat[3, 3] = 1
         gt_boxes, bda_rot = bev_transform(gt_boxes, rotate_bda, scale_bda,
@@ -634,7 +738,6 @@ class NuscMVDetDataset(Dataset):
             return len(self.sample_indices)
         else:
             return len(self.infos)
-
 
 def collate_fn(data, is_return_depth=False):
     imgs_batch = list()

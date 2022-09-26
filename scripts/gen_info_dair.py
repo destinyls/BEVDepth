@@ -75,7 +75,6 @@ def cam2velo(r_velo2cam, t_velo2cam):
     t_cam2velo = Tr_cam2velo[:3, 3]
     return r_cam2velo, t_cam2velo
     
-    
 def equation_plane(points): 
     x1, y1, z1 = points[0, 0], points[0, 1], points[0, 2]
     x2, y2, z2 = points[1, 0], points[1, 1], points[1, 2]
