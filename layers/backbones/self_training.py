@@ -27,7 +27,7 @@ class SelfTraining(nn.Module):
                  proj_hidden_dim=2048,
                  pred_hidden_dim=512,
                  out_dim=2048,
-                 pc_range=[-51.2, -51.2, 51.2, 51.2],
+                 pc_range=[-51.2, -51.2, -5, 51.2, 51.2, 3],
                  bev_h=128,
                  bev_w=128
                  ):
@@ -55,8 +55,8 @@ class SelfTraining(nn.Module):
         self.pc_range = pc_range
         self.bev_h = bev_h
         self.bev_w = bev_w
-        self.real_w = self.pc_range[3] - self.pc_range[0]
-        self.real_h = self.pc_range[4] - self.pc_range[1]
+        self.real_w = self.pc_range[2] - self.pc_range[0]
+        self.real_h = self.pc_range[3] - self.pc_range[1]
         self.grid_length = [self.real_h / self.bev_h, self.real_w / self.bev_w]
 
     def forward(self, feature_map): 
@@ -73,16 +73,12 @@ class SelfTraining(nn.Module):
         features_pixel_rois = roi_align(feature_map, pixel_rois, output_size=[1,1], spatial_scale=1, sampling_ratio=1)
         features_pixel_rois = features_pixel_rois.view(bs, -1, features_pixel_rois.shape[1])
         
-        ids1 = range(0, bs, 2)
-        ids2 = range(1, bs+1, 2)
+        ids1 = np.arange(0, bs, 2)
+        ids2 = np.arange(1, bs+1, 2)
         
-        x1, x2 = features_pixel_rois[ids1], features_pixel_rois[ids2]
-        print(x1.shape)
-        print(x2.shape)
-        
-        if x1.shape[0] == 1:
-            x1 = x1.repeat(2, 1)
-            x2 = x2.repeat(2, 1)
+        x1, x2 = features_pixel_rois[ids1], features_pixel_rois[ids2]        
+        x1 = x1.view(-1, x1.shape[-1])
+        x2 = x2.view(-1, x2.shape[-1])
         z1, z2 = self.projector(x1), self.projector(x2)
         p1, p2 = self.predictor(z1), self.predictor(z2)
         loss = D(p1, z2) / 2 + D(p2, z1) / 2
@@ -92,7 +88,6 @@ class SelfTraining(nn.Module):
         u, v = np.ogrid[0:num_voxels[0], 0:num_voxels[1]]
         uu, vv = np.meshgrid(u, v, sparse=False)
         voxel_size = np.array([self.bev_h / num_voxels[0], self.bev_w / num_voxels[1]])
-        # [50,50,2]
         uv = np.concatenate((uu[:,:,np.newaxis], vv[:,:,np.newaxis]), axis=-1)
         uv = uv * voxel_size + 0.5 * voxel_size        
         return uv.astype(np.float32)

@@ -416,7 +416,7 @@ class NuscMVDetDataset(Dataset):
                     cam_info[cam]['calibrated_sensor']['camera_intrinsic'])
                 intrin_mat[:2, :2] = intrin_mat[:2, :2] / 2.0
                 intrin_mat[:2, 2] = intrin_mat[:2, 2] / 2.0
-                
+                '''
                 sweepego2sweepsensor = sweepsensor2sweepego.inverse()
                 image = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2BGR)
                 if self.is_train:
@@ -426,7 +426,7 @@ class NuscMVDetDataset(Dataset):
                 img = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
                 sweepsensor2sweepego = torch.Tensor(sweepego2sweepsensor_rectify).inverse()
                 intrin_mat = torch.Tensor(intrin_mat_rectify)
-                
+                '''
                 # global sensor to cur ego
                 w, x, y, z = key_info[cam]['ego_pose']['rotation']
                 keyego2global_rot = torch.Tensor(

@@ -12,6 +12,7 @@ from torch import nn
 
 from ops.voxel_pooling import voxel_pooling
 
+
 __all__ = ['LSSFPN']
 
 
@@ -296,7 +297,7 @@ class LSSFPN(nn.Module):
 
         self.img_neck.init_weights()
         self.img_backbone.init_weights()
-
+        
     def _configure_depth_net(self, depth_net_conf):
         return DepthNet(
             depth_net_conf['in_channels'],
@@ -473,7 +474,6 @@ class LSSFPN(nn.Module):
                     self.voxel_size).int()
         feature_map = voxel_pooling(geom_xyz, img_feat_with_depth.contiguous(),
                                     self.voxel_num.cuda())
-        
         if is_return_depth:
             return feature_map.contiguous(), depth
         return feature_map.contiguous()

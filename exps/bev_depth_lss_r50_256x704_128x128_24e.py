@@ -17,6 +17,7 @@ from pytorch_lightning.callbacks import Callback
 from torch.cuda.amp.autocast_mode import autocast
 from torch.optim.lr_scheduler import MultiStepLR
 
+
 from dataset.nusc_mv_det_dataset import NuscMVDetDataset, collate_fn
 from evaluators.det_mv_evaluators import DetMVNuscEvaluator
 from models.bev_depth import BEVDepth
@@ -59,7 +60,7 @@ backbone_conf = {
         out_channels=[128, 128, 128, 128],
     ),
     'depth_net_conf':
-    dict(in_channels=512, mid_channels=512)
+    dict(in_channels=512, mid_channels=512),
 }
 ida_aug_conf = {
     'resize_lim': (0.75, 1.0),
@@ -104,6 +105,7 @@ bev_neck = dict(type='SECONDFPN',
                 in_channels=[80, 160, 320, 640],
                 upsample_strides=[1, 2, 4, 8],
                 out_channels=[64, 64, 64, 64])
+
 
 CLASSES = [
     'car',
@@ -185,6 +187,15 @@ head_conf = {
     'min_radius': 2,
 }
 
+self_training_conf = dict(type='SelfTraining',
+                     in_dim=80,
+                     proj_hidden_dim=2048,
+                     pred_hidden_dim=512,
+                     out_dim=2048,
+                     pc_range=[-51.2, -51.2, 51.2, 51.2],
+                     bev_h=128,
+                     bev_w=128,
+                )
 
 class BEVDepthLightningModel(LightningModule):
     MODEL_NAMES = sorted(name for name in models.__dict__
@@ -199,6 +210,7 @@ class BEVDepthLightningModel(LightningModule):
                  class_names=CLASSES,
                  backbone_conf=backbone_conf,
                  head_conf=head_conf,
+                 self_training_conf=self_training_conf,
                  ida_aug_conf=ida_aug_conf,
                  bda_aug_conf=bda_aug_conf,
                  default_root_dir='./outputs/',
@@ -221,7 +233,9 @@ class BEVDepthLightningModel(LightningModule):
                                             output_dir=self.default_root_dir)
         self.model = BEVDepth(self.backbone_conf,
                               self.head_conf,
+                              self_training_conf,
                               is_train_depth=False)
+        
         self.mode = 'valid'
         self.img_conf = img_conf
         self.data_use_cbgs = False
@@ -249,15 +263,17 @@ class BEVDepthLightningModel(LightningModule):
             gt_boxes = [gt_box.cuda() for gt_box in gt_boxes]
             gt_labels = [gt_label.cuda() for gt_label in gt_labels]        
         if len(batch) == 7:
-            preds, depth_preds = self(sweep_imgs, mats)
+            preds, feature_map, depth_preds = self(sweep_imgs, mats)
         else:
-            preds = self(sweep_imgs, mats)
+            preds, feature_map = self(sweep_imgs, mats)
         if isinstance(self.model, torch.nn.parallel.DistributedDataParallel):
             targets = self.model.module.get_targets(gt_boxes, gt_labels)
             detection_loss = self.model.module.loss(targets, preds)
+            simsiam_loss = self.model.module.simsiam(feature_map)
         else:
             targets = self.model.get_targets(gt_boxes, gt_labels)
             detection_loss = self.model.loss(targets, preds)
+            simsiam_loss = self.model.simsiam(feature_map)
 
         if len(batch) == 7:
             if len(depth_labels.shape) == 5:
@@ -265,11 +281,13 @@ class BEVDepthLightningModel(LightningModule):
                 depth_labels = depth_labels[:, 0, ...]
             depth_loss = self.get_depth_loss(depth_labels.cuda(), depth_preds)
             self.log('detection_loss', detection_loss)
+            self.log('simsiam_loss', simsiam_loss)
             self.log('depth_loss', depth_loss)
-            return detection_loss + depth_loss
+            return detection_loss + simsiam_loss + depth_loss
         else:
             self.log('detection_loss', detection_loss)
-            return detection_loss
+            self.log('simsiam_loss', simsiam_loss)
+            return detection_loss + simsiam_loss
 
     def get_depth_loss(self, depth_labels, depth_preds):
         depth_labels = self.get_downsampled_gt_depth(depth_labels)
