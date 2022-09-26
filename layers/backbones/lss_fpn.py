@@ -459,6 +459,7 @@ class LSSFPN(nn.Module):
             img_feat_with_depth.shape[3],
             img_feat_with_depth.shape[4],
         )
+
         geom_xyz = self.get_geometry(
             mats_dict['sensor2ego_mats'][:, sweep_index, ...],
             mats_dict['sensor2virtual_mats'][:, sweep_index, ...],
@@ -472,6 +473,7 @@ class LSSFPN(nn.Module):
                     self.voxel_size).int()
         feature_map = voxel_pooling(geom_xyz, img_feat_with_depth.contiguous(),
                                     self.voxel_num.cuda())
+        
         if is_return_depth:
             return feature_map.contiguous(), depth
         return feature_map.contiguous()

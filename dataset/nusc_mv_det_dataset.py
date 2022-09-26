@@ -256,6 +256,10 @@ class NuscMVDetDataset(Dataset):
         
         self.image_rectify = ImageRectify(image_shape=[self.ida_aug_conf['H'],self.ida_aug_conf['W']])
         self.visual_tool = ProduceHeightMap(resolution=0.1)
+        
+        self.cache_flag = False
+        self.cache_flag_index = -1
+        self.cache_bda_augmentation = None
 
     def _get_sample_indices(self):
         """Load annotations from ann_file.
@@ -378,6 +382,8 @@ class NuscMVDetDataset(Dataset):
             for sweep_idx, cam_info in enumerate(cam_infos):
                 img = Image.open(
                     os.path.join(self.data_root, cam_info[cam]['filename']))
+                img = img.resize((int(img.size[0] // 2), int(img.size[1] // 2)))
+
                 # img = Image.fromarray(img)
                 w, x, y, z = cam_info[cam]['calibrated_sensor']['rotation']
                 # sweep sensor to sweep ego
@@ -408,11 +414,13 @@ class NuscMVDetDataset(Dataset):
                 intrin_mat[3, 3] = 1
                 intrin_mat[:3, :3] = torch.Tensor(
                     cam_info[cam]['calibrated_sensor']['camera_intrinsic'])
+                intrin_mat[:2, :2] = intrin_mat[:2, :2] / 2.0
+                intrin_mat[:2, 2] = intrin_mat[:2, 2] / 2.0
                 
                 sweepego2sweepsensor = sweepsensor2sweepego.inverse()
                 image = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2BGR)
                 if self.is_train:
-                    image, sweepego2sweepsensor_rectify, intrin_mat_rectify = self.image_rectify(image, sweepego2sweepsensor.numpy(), intrin_mat.numpy(), True, True)
+                    image, sweepego2sweepsensor_rectify, intrin_mat_rectify = self.image_rectify(image, sweepego2sweepsensor.numpy(), intrin_mat.numpy(), True, False)
                 else:
                     image, sweepego2sweepsensor_rectify, intrin_mat_rectify = self.image_rectify(image, sweepego2sweepsensor.numpy(), intrin_mat.numpy(), False, False)
                 img = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
@@ -577,6 +585,9 @@ class NuscMVDetDataset(Dataset):
         return cams
 
     def __getitem__(self, idx):
+        if self.cache_flag:
+            idx = self.cache_flag_index
+            
         if self.use_cbgs:
             idx = self.sample_indices[idx]
         cam_infos = list()
@@ -628,8 +639,15 @@ class NuscMVDetDataset(Dataset):
         # image = self.visual_tool(debug_dict["image"], gt_boxes.numpy(), debug_dict["sweepego2sweepsensor"], debug_dict["intrin_mat"])
         # cv2.imwrite("debug_image.jpg", image)
         # time.sleep(5)
-        rotate_bda, scale_bda, flip_dx, flip_dy = self.sample_bda_augmentation(
-        )
+        if self.cache_flag:
+            rotate_bda, scale_bda, flip_dx, flip_dy = self.cache_bda_augmentation
+            self.cache_flag = False
+        else:
+            self.cache_bda_augmentation = self.sample_bda_augmentation(
+            )
+            rotate_bda, scale_bda, flip_dx, flip_dy = self.cache_bda_augmentation
+            self.cache_flag = True
+            self.cache_flag_index = idx
         bda_mat = sweep_imgs.new_zeros(4, 4)
         bda_mat[3, 3] = 1
         gt_boxes, bda_rot = bev_transform(gt_boxes, rotate_bda, scale_bda,
@@ -651,6 +669,7 @@ class NuscMVDetDataset(Dataset):
         ]
         if self.return_depth:
             ret_list.append(image_data_list[9])
+            
         return ret_list
 
     def __str__(self):
