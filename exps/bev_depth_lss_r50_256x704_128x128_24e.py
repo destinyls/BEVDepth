@@ -267,12 +267,11 @@ class BEVDepthLightningModel(LightningModule):
         if isinstance(self.model, torch.nn.parallel.DistributedDataParallel):
             targets = self.model.module.get_targets(gt_boxes, gt_labels)
             detection_loss = self.model.module.loss(targets, preds)
-            simsiam_loss = self.model.module.simsiam(feature_map)
+            simsiam_loss = self.model.module.simsiam(feature_map, gt_boxes)
         else:
             targets = self.model.get_targets(gt_boxes, gt_labels)
             detection_loss = self.model.loss(targets, preds)
-            simsiam_loss = self.model.simsiam(feature_map)
-
+            simsiam_loss = self.model.simsiam(feature_map, gt_boxes)
         if len(batch) == 7:
             if len(depth_labels.shape) == 5:
                 # only key-frame will calculate depth loss
@@ -501,7 +500,7 @@ def run_cli():
     parser.set_defaults(
         profiler='simple',
         deterministic=False,
-        max_epochs=24,
+        max_epochs=48,
         accelerator='ddp',
         num_sanity_val_steps=0,
         gradient_clip_val=5,

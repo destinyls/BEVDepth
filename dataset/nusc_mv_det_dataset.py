@@ -379,6 +379,7 @@ class NuscMVDetDataset(Dataset):
             resize, resize_dims, crop, flip, \
                 rotate_ida = self.sample_ida_augmentation(
                     )
+
             for sweep_idx, cam_info in enumerate(cam_infos):
                 img = Image.open(
                     os.path.join(self.data_root, cam_info[cam]['filename']))
