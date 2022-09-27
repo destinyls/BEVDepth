@@ -23,10 +23,8 @@ from evaluators.det_mv_evaluators import DetMVNuscEvaluator
 from models.bev_depth import BEVDepth
 from utils.torch_dist import all_gather_object, get_rank, synchronize
 
-# H = 900
-# W = 1600
-H = 450
-W = 800
+H = 900
+W = 1600
 final_dim = (256, 704)
 img_conf = dict(img_mean=[123.675, 116.28, 103.53],
                 img_std=[58.395, 57.12, 57.375],
@@ -503,7 +501,7 @@ def run_cli():
     parser.set_defaults(
         profiler='simple',
         deterministic=False,
-        max_epochs=48,
+        max_epochs=24,
         accelerator='ddp',
         num_sanity_val_steps=0,
         gradient_clip_val=5,

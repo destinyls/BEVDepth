@@ -62,7 +62,7 @@ class SelfTraining(nn.Module):
     def forward(self, feature_map): 
         bs = feature_map.shape[0]
         
-        pixel_points = self.bev_voxels(num_voxels=[50, 50])
+        pixel_points = self.bev_voxels(num_voxels=[128, 128])
         pixel_points = torch.from_numpy(pixel_points).to(device=feature_map.device)
         
         pixel_points = pixel_points.view(1, -1, 2).repeat(bs, 1, 1)
@@ -75,8 +75,8 @@ class SelfTraining(nn.Module):
         
         ids1 = np.arange(0, bs, 2)
         ids2 = np.arange(1, bs+1, 2)
-        
-        x1, x2 = features_pixel_rois[ids1], features_pixel_rois[ids2]        
+        x1, x2 = features_pixel_rois[ids1], features_pixel_rois[ids2]
+            
         x1 = x1.view(-1, x1.shape[-1])
         x2 = x2.view(-1, x2.shape[-1])
         z1, z2 = self.projector(x1), self.projector(x2)
@@ -89,5 +89,5 @@ class SelfTraining(nn.Module):
         uu, vv = np.meshgrid(u, v, sparse=False)
         voxel_size = np.array([self.bev_h / num_voxels[0], self.bev_w / num_voxels[1]])
         uv = np.concatenate((uu[:,:,np.newaxis], vv[:,:,np.newaxis]), axis=-1)
-        uv = uv * voxel_size + 0.5 * voxel_size        
+        uv = uv * voxel_size + 0.5 * voxel_size
         return uv.astype(np.float32)

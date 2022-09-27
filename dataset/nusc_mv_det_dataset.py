@@ -382,7 +382,6 @@ class NuscMVDetDataset(Dataset):
             for sweep_idx, cam_info in enumerate(cam_infos):
                 img = Image.open(
                     os.path.join(self.data_root, cam_info[cam]['filename']))
-                img = img.resize((int(img.size[0] // 2), int(img.size[1] // 2)))
 
                 # img = Image.fromarray(img)
                 w, x, y, z = cam_info[cam]['calibrated_sensor']['rotation']
@@ -414,8 +413,6 @@ class NuscMVDetDataset(Dataset):
                 intrin_mat[3, 3] = 1
                 intrin_mat[:3, :3] = torch.Tensor(
                     cam_info[cam]['calibrated_sensor']['camera_intrinsic'])
-                intrin_mat[:2, :2] = intrin_mat[:2, :2] / 2.0
-                intrin_mat[:2, 2] = intrin_mat[:2, 2] / 2.0
                 '''
                 sweepego2sweepsensor = sweepsensor2sweepego.inverse()
                 image = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2BGR)
