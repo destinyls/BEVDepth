@@ -93,13 +93,15 @@ def get_rot(h):
 def img_transform(img, resize, resize_dims, crop, flip, rotate):
     ida_rot = torch.eye(2)
     ida_tran = torch.zeros(2)
+    
     # adjust image
     img = img.resize(resize_dims)
     img = img.crop(crop)
     if flip:
         img = img.transpose(method=Image.FLIP_LEFT_RIGHT)
     img = img.rotate(rotate)
-
+    # img = img.rotate(rotate, expand=0, center=(300, 300), fillcolor=(0,0,0))
+    
     # post-homography transformation
     ida_rot *= resize
     ida_tran -= torch.Tensor(crop[:2])
@@ -301,13 +303,12 @@ class NuscMVDetDataset(Dataset):
         H, W = self.ida_aug_conf['H'], self.ida_aug_conf['W']
         fH, fW = self.ida_aug_conf['final_dim']
         if self.is_train:
-            resize = np.random.uniform(*self.ida_aug_conf['resize_lim'])
+            resize = max(fH / H, fW / W)
             resize_dims = (int(W * resize), int(H * resize))
             newW, newH = resize_dims
             crop_h = int(
-                (1 - np.random.uniform(*self.ida_aug_conf['bot_pct_lim'])) *
-                newH) - fH
-            crop_w = int(np.random.uniform(0, max(0, newW - fW)))
+                (1 - np.mean(self.ida_aug_conf['bot_pct_lim'])) * newH) - fH
+            crop_w = int(max(0, newW - fW) / 2)
             crop = (crop_w, crop_h, crop_w + fW, crop_h + fH)
             flip = False
             if self.ida_aug_conf['rand_flip'] and np.random.choice([0, 1]):
