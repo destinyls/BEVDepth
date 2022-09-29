@@ -53,17 +53,19 @@ class ImageRectify(object):
     def rectify_roll_params(self, lidar2cam, roll_status):
         target_roll_status = np.random.uniform(self.roll_range[0], self.roll_range[1])
         roll = target_roll_status - roll_status
+        roll = 10.0
         roll_rad = self.degree2rad(roll)
         rectify_roll = np.array([[math.cos(roll_rad), -math.sin(roll_rad), 0, 0], 
                                  [math.sin(roll_rad), math.cos(roll_rad), 0, 0], 
                                  [0, 0, 1, 0],
                                  [0, 0, 0, 1]])
         lidar2cam_rectify = np.matmul(rectify_roll, lidar2cam)
-        return lidar2cam_rectify
+        return lidar2cam_rectify, roll_rad
 
     def rectify_pitch_params(self, lidar2cam, pitch_status):
         target_pitch_status = np.random.uniform(pitch_status + self.pitch_range[0], pitch_status + self.pitch_range[1])            
         pitch = -1 * (target_pitch_status - pitch_status)
+        pitch = 10
         pitch_rad = self.degree2rad(pitch)
         rectify_pitch = np.array([[1, 0, 0, 0],
                                   [0,math.cos(pitch_rad), -math.sin(pitch_rad), 0], 
@@ -150,7 +152,7 @@ class ImageRectify(object):
         if is_intrin:
             cam_intrinsic_rectify = self.rectify_cam_intrinsic(cam_intrinsic)
         if is_roll:
-            lidar2cam_rectify = self.rectify_roll_params(lidar2cam_rectify, roll_status)
+            lidar2cam_rectify, roll_rad = self.rectify_roll_params(lidar2cam_rectify, roll_status)
         if is_pitch:
             lidar2cam_rectify = self.rectify_pitch_params(lidar2cam_rectify, pitch_status)
         M = self.get_M(lidar2cam[:3,:3], cam_intrinsic[:3,:3], lidar2cam_rectify[:3,:3], cam_intrinsic_rectify[:3,:3])
