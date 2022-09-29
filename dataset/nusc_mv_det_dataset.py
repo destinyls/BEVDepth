@@ -456,22 +456,19 @@ class NuscMVDetDataset(Dataset):
                     cam_info[cam]['calibrated_sensor']['camera_intrinsic'])
 
                 sweepego2sweepsensor = sweepsensor2sweepego.inverse()
-                intrin_mat, sweepego2sweepsensor, ratio, roll = self.sample_intrin_extrin_augmentation(intrin_mat, sweepego2sweepsensor)
+                '''
+                if self.is_train:
+                    intrin_mat, sweepego2sweepsensor, ratio, roll = self.sample_intrin_extrin_augmentation(intrin_mat, sweepego2sweepsensor)
+                    img = img_intrin_extrin_transform(img, ratio, roll, intrin_mat.numpy())
+                '''
+                if self.is_train:
+                    img, sweepego2sweepsensor, intrin_mat = self.image_rectify(img, sweepego2sweepsensor, intrin_mat, True, True, True)
+                else:
+                    img, sweepego2sweepsensor, intrin_mat = self.image_rectify(img, sweepego2sweepsensor, intrin_mat, False, False, False)
+                
                 denorm = get_denorm(sweepego2sweepsensor.numpy())
                 sweepsensor2sweepego = sweepego2sweepsensor.inverse()
-                img = img_intrin_extrin_transform(img, ratio, roll, intrin_mat.numpy())
-
-                '''
-                sweepego2sweepsensor = sweepsensor2sweepego.inverse()
-                image = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2BGR)
-                if self.is_train:
-                    image, sweepego2sweepsensor_rectify, intrin_mat_rectify = self.image_rectify(image, sweepego2sweepsensor.numpy(), intrin_mat.numpy(), True, False)
-                else:
-                    image, sweepego2sweepsensor_rectify, intrin_mat_rectify = self.image_rectify(image, sweepego2sweepsensor.numpy(), intrin_mat.numpy(), False, False)
-                img = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-                sweepsensor2sweepego = torch.Tensor(sweepego2sweepsensor_rectify).inverse()
-                intrin_mat = torch.Tensor(intrin_mat_rectify)
-                '''
+                
                 # global sensor to cur ego
                 w, x, y, z = key_info[cam]['ego_pose']['rotation']
                 keyego2global_rot = torch.Tensor(

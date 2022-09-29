@@ -1,10 +1,12 @@
 import math
+import torch
 import cv2
 import numpy as np
 from numba import jit
+from PIL import Image
 
 class ImageRectify(object):
-    def __init__(self, image_shape, roll_range=[-1.5, 1.5], pitch_range=[-0.5, 0.5], ratio=[0.95, 1.05]):
+    def __init__(self, image_shape, roll_range=[-5.5, 5.5], pitch_range=[-1.0, 1.0], ratio=[0.85, 1.15]):
         self.roll_range = roll_range
         self.pitch_range = pitch_range
         self.ratio = ratio
@@ -46,7 +48,7 @@ class ImageRectify(object):
         ratio = np.random.uniform(self.ratio[0], self.ratio[1])
         cam_intrinsic_rectify = cam_intrinsic.copy()
         cam_intrinsic_rectify[:2,:2] = cam_intrinsic[:2,:2] * ratio
-        return cam_intrinsic_rectify, ratio
+        return cam_intrinsic_rectify
     
     def rectify_roll_params(self, lidar2cam, roll_status):
         target_roll_status = np.random.uniform(self.roll_range[0], self.roll_range[1])
@@ -57,7 +59,7 @@ class ImageRectify(object):
                                  [0, 0, 1, 0],
                                  [0, 0, 0, 1]])
         lidar2cam_rectify = np.matmul(rectify_roll, lidar2cam)
-        return lidar2cam_rectify, roll_rad
+        return lidar2cam_rectify
 
     def rectify_pitch_params(self, lidar2cam, pitch_status):
         target_pitch_status = np.random.uniform(pitch_status + self.pitch_range[0], pitch_status + self.pitch_range[1])            
@@ -113,19 +115,6 @@ class ImageRectify(object):
         new_image = cv2.warpAffine(image, M, (w, h), flags=cv2.INTER_CUBIC)
         return new_image
     
-    def transfor_with_pitch(self, image, lidar2cam, lidar2cam_rectify, cam_intrinsic):
-        ref_pixel = np.array([[540, 100, 1.0, 1.0], [540, 200, 1.0, 1.0], [540, 500, 1.0, 1.0]])
-        
-        cam_intrinsic_inv = np.linalg.inv(cam_intrinsic)
-        cam2lidar = np.linalg.inv(lidar2cam)
-        ref_points_cam = np.matmul(cam_intrinsic_inv, ref_pixel.T)
-        ref_points_lidar = np.matmul(cam2lidar, ref_points_cam)
-                
-        ref_points_cam = np.matmul(lidar2cam_rectify, ref_points_lidar)
-        ref_points_img = np.matmul(cam_intrinsic, ref_points_cam).T
-        ref_pixel_rectify = ref_points_img[:, :2] / ref_points_img[:, 2][:, np.newaxis]
-        return image
-    
     def transform_with_M_bilinear(self, image, M):
         M = np.linalg.inv(M)
         uvd_new = np.matmul(M, self.uvd.T).T
@@ -153,18 +142,23 @@ class ImageRectify(object):
         image_new[mask] = [0,0,0]
         return image_new.astype(np.uint8)
     
-    def __call__(self, image, lidar2cam, cam_intrinsic, is_roll=False, is_intrin=False):
-        roll_status, _ = self.parse_roll_pitch(lidar2cam)
-        center = cam_intrinsic[:2, 2].astype(np.int32)  # w, h
+    def __call__(self, image, lidar2cam, cam_intrinsic, is_roll=False, is_pitch = False, is_intrin=False):
+        image = cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2BGR)
+        lidar2cam, cam_intrinsic = lidar2cam.numpy(), cam_intrinsic.numpy()
+        roll_status, pitch_status = self.parse_roll_pitch(lidar2cam)
         lidar2cam_rectify, cam_intrinsic_rectify = lidar2cam, cam_intrinsic
         if is_intrin:
-            cam_intrinsic_rectify, ratio = self.rectify_cam_intrinsic(cam_intrinsic)
-            image = self.transfor_with_intrin(image, ratio, center)
+            cam_intrinsic_rectify = self.rectify_cam_intrinsic(cam_intrinsic)
         if is_roll:
-            lidar2cam_rectify, roll_rad = self.rectify_roll_params(lidar2cam_rectify, roll_status)  
-            image = self.transfor_with_roll(image, center, roll_rad)
-        # M = self.get_M(lidar2cam[:3,:3], cam_intrinsic[:3,:3], lidar2cam_rectify[:3,:3], cam_intrinsic_rectify[:3,:3])
-        # image = self.transform_with_M_bilinear(image, M)
+            lidar2cam_rectify = self.rectify_roll_params(lidar2cam_rectify, roll_status)
+        if is_pitch:
+            lidar2cam_rectify = self.rectify_pitch_params(lidar2cam_rectify, pitch_status)
+        M = self.get_M(lidar2cam[:3,:3], cam_intrinsic[:3,:3], lidar2cam_rectify[:3,:3], cam_intrinsic_rectify[:3,:3])
+        image = self.transform_with_M_bilinear(image, M)
+
+        lidar2cam_rectify = torch.Tensor(lidar2cam_rectify)
+        cam_intrinsic_rectify = torch.Tensor(cam_intrinsic_rectify)
+        image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
         return image, lidar2cam_rectify, cam_intrinsic_rectify
 
 class ProduceHeightMap(object):
