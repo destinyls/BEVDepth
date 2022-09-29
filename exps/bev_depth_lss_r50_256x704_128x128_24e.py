@@ -190,7 +190,7 @@ self_training_conf = dict(type='SelfTraining',
                      proj_hidden_dim=2048,
                      pred_hidden_dim=512,
                      out_dim=2048,
-                     pc_range=[-51.2, -51.2, 51.2, 51.2],
+                     pc_range=[-51.2, -51.2, -5, 51.2, 51.2, 3],
                      bev_h=128,
                      bev_w=128,
                 )

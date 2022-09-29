@@ -1,4 +1,5 @@
 import math
+import cv2
 import numpy as np
 
 import torch
@@ -55,8 +56,8 @@ class SelfTraining(nn.Module):
         self.pc_range = pc_range
         self.bev_h = bev_h
         self.bev_w = bev_w
-        self.real_w = self.pc_range[2] - self.pc_range[0]
-        self.real_h = self.pc_range[3] - self.pc_range[1]
+        self.real_w = self.pc_range[3] - self.pc_range[0]
+        self.real_h = self.pc_range[4] - self.pc_range[1]
         self.grid_length = [self.real_h / self.bev_h, self.real_w / self.bev_w]
 
     def forward(self, feature_map, gt_boxes=None): 
@@ -84,7 +85,7 @@ class SelfTraining(nn.Module):
         bbox_rois = torch.cat([batch_id, bbox_rois.view(-1, 4)], dim=-1)   
         features_bbox_rois = roi_align(feature_map, bbox_rois, output_size=[1,1], spatial_scale=1, sampling_ratio=1)
         features_bbox_rois = features_bbox_rois.view(bs, -1, features_bbox_rois.shape[1])
-        
+
         x1, x2 = features_bbox_rois[ids1], features_bbox_rois[ids2]
         mask = bbox_mask[ids1].flatten()
         x1 = x1.view(-1, x1.shape[-1])[mask]
@@ -123,10 +124,11 @@ class SelfTraining(nn.Module):
         return uv.astype(np.float32)
     
     def point2bevpixel(self, points):
-        pixels_w = (points[:, 0] - self.pc_range[0]) / self.grid_length[0]
-        pixels_h = (points[:, 1] - self.pc_range[1]) / self.grid_length[1]
-        pixels = np.concatenate((pixels_h[:, np.newaxis], pixels_w[:, np.newaxis]), axis=-1)
+        pixels_w = (points[:, 0] - self.pc_range[0]) / self.grid_length[0]  # xs
+        pixels_h = (points[:, 1] - self.pc_range[1]) / self.grid_length[1]  # ys
+
+        pixels = np.concatenate((pixels_w[:, np.newaxis], pixels_h[:, np.newaxis]), axis=-1)
         pixels = pixels.astype(np.int32)
-        pixels[:, 0] = np.clip(pixels[:, 0], 0, self.bev_h-1)
-        pixels[:, 1] = np.clip(pixels[:, 1], 0, self.bev_w-1)
+        pixels[:, 0] = np.clip(pixels[:, 0], 0, self.bev_w-1)
+        pixels[:, 1] = np.clip(pixels[:, 1], 0, self.bev_h-1)
         return pixels
