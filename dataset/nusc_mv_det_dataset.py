@@ -90,7 +90,7 @@ def get_rot(h):
         [-np.sin(h), np.cos(h)],
     ])
 
-def img_intrin_extrin_transform(img, ratio, roll, intrin_mat):
+def img_intrin_extrin_transform(img, ratio, roll, transform_pitch, intrin_mat):
     center = intrin_mat[:2, 2].astype(np.int32) 
     center = (int(center[0]), int(center[1]))
 
@@ -105,7 +105,7 @@ def img_intrin_extrin_transform(img, ratio, roll, intrin_mat):
         image.paste(img, (w_min, h_min,  w_min + new_W, h_min + new_H))
     else:
         image = img.crop((w_min, h_min,  w_min + W, h_min + H))
-    img = image.rotate(-roll, expand=0, center=center, fillcolor=(0,0,0))
+    img = image.rotate(-roll, expand=0, center=center, translate=(0, transform_pitch), fillcolor=(0,0,0), resample=Image.BICUBIC)
     return img
 
 def img_transform(img, resize, resize_dims, crop, flip, rotate):
@@ -280,7 +280,8 @@ class NuscMVDetDataset(Dataset):
         self.cache_bda_augmentation = None
 
         self.ratio_range = [0.95, 1.0]
-        self.roll_range = [-5.4, 5.4]
+        self.roll_range = [-2.0, 2.0]
+        self.pitch_range = [-1.0, 1.0]
 
     def _get_sample_indices(self):
         """Load annotations from ann_file.
@@ -320,31 +321,52 @@ class NuscMVDetDataset(Dataset):
     def degree2rad(self, degree):
         return degree * np.pi / 180
 
+    def get_M(self, R, K, R_r, K_r):
+        R_inv = np.linalg.inv(R)
+        K_inv = np.linalg.inv(K)
+        M = np.matmul(K_r, R_r)
+        M = np.matmul(M, R_inv)
+        M = np.matmul(M, K_inv)
+        return M
+
     def sample_intrin_extrin_augmentation(self, intrin_mat, sweepego2sweepsensor):
         intrin_mat, sweepego2sweepsensor = intrin_mat.numpy(), sweepego2sweepsensor.numpy()
         # rectify intrin_mat
         ratio = np.random.uniform(self.ratio_range[0], self.ratio_range[1])
-        ratio = 1.0
         intrin_mat_rectify = intrin_mat.copy()
         intrin_mat_rectify[:2,:2] = intrin_mat[:2,:2] * ratio
         
-        # rectify sweepego2sweepsensor
+        # rectify sweepego2sweepsensor by roll
         roll = np.random.uniform(self.roll_range[0], self.roll_range[1])
-        roll = 10.0
         roll_rad = self.degree2rad(roll)
         rectify_roll = np.array([[math.cos(roll_rad), -math.sin(roll_rad), 0, 0], 
                                  [math.sin(roll_rad), math.cos(roll_rad), 0, 0], 
                                  [0, 0, 1, 0],
                                  [0, 0, 0, 1]])
-        sweepego2sweepsensor_rectify = np.matmul(rectify_roll, sweepego2sweepsensor)
-        intrin_mat_rectify, sweepego2sweepsensor_rectify = torch.Tensor(intrin_mat_rectify), torch.Tensor(sweepego2sweepsensor_rectify)
-        return intrin_mat_rectify, sweepego2sweepsensor_rectify, ratio, roll
+        sweepego2sweepsensor_rectify_roll = np.matmul(rectify_roll, sweepego2sweepsensor)
+        
+        # rectify sweepego2sweepsensor by pitch
+        pitch = np.random.uniform(self.pitch_range[0], self.pitch_range[1])
+        pitch_rad = self.degree2rad(pitch)
+        rectify_pitch = np.array([[1, 0, 0, 0],
+                                  [0,math.cos(pitch_rad), -math.sin(pitch_rad), 0], 
+                                  [0,math.sin(pitch_rad), math.cos(pitch_rad), 0],
+                                  [0, 0, 0, 1]])
+        sweepego2sweepsensor_rectify_pitch = np.matmul(rectify_pitch, sweepego2sweepsensor_rectify_roll)
+        M = self.get_M(sweepego2sweepsensor_rectify_roll[:3,:3], intrin_mat_rectify[:3,:3], sweepego2sweepsensor_rectify_pitch[:3,:3], intrin_mat_rectify[:3,:3])
+        center = intrin_mat_rectify[:2, 2]  # w, h
+        center_ref = np.array([center[0], center[1], 1.0])
+        center_ref = np.matmul(M, center_ref.T)[:2]
+        transform_pitch = int(center_ref[1] - center[1])
+
+        intrin_mat_rectify, sweepego2sweepsensor_rectify = torch.Tensor(intrin_mat_rectify), torch.Tensor(sweepego2sweepsensor_rectify_pitch)
+        return intrin_mat_rectify, sweepego2sweepsensor_rectify, ratio, roll, transform_pitch
 
     def sample_ida_augmentation(self):
         """Generate ida augmentation values based on ida_config."""
         H, W = self.ida_aug_conf['H'], self.ida_aug_conf['W']
         fH, fW = self.ida_aug_conf['final_dim']
-        if self.is_train:
+        if self.is_train and False:
             resize = np.random.uniform(*self.ida_aug_conf['resize_lim'])
             resize_dims = (int(W * resize), int(H * resize))
             newW, newH = resize_dims
@@ -459,21 +481,19 @@ class NuscMVDetDataset(Dataset):
                 intrin_mat[3, 3] = 1
                 intrin_mat[:3, :3] = torch.Tensor(
                     cam_info[cam]['calibrated_sensor']['camera_intrinsic'])
-                
                 sweepego2sweepsensor = sweepsensor2sweepego.inverse()
-                '''
+                
                 if self.is_train:
-                    intrin_mat, sweepego2sweepsensor, ratio, roll = self.sample_intrin_extrin_augmentation(intrin_mat, sweepego2sweepsensor)
-                    img = img_intrin_extrin_transform(img, ratio, roll, intrin_mat.numpy())
+                    intrin_mat, sweepego2sweepsensor, ratio, roll, transform_pitch = self.sample_intrin_extrin_augmentation(intrin_mat, sweepego2sweepsensor)
+                    img = img_intrin_extrin_transform(img, ratio, roll, transform_pitch, intrin_mat.numpy())
                 '''
                 if self.is_train:
                     img, sweepego2sweepsensor, intrin_mat = self.image_rectify(img, sweepego2sweepsensor, intrin_mat, True, True, True)
                 else:
                     img, sweepego2sweepsensor, intrin_mat = self.image_rectify(img, sweepego2sweepsensor, intrin_mat, False, False, False)
-                
+                '''
                 denorm = get_denorm(sweepego2sweepsensor.numpy())
                 sweepsensor2sweepego = sweepego2sweepsensor.inverse()
-
                 # image = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2BGR)
                 # debug_dict = {"image": image, "sweepego2sweepsensor":sweepego2sweepsensor.numpy(), "intrin_mat":intrin_mat.numpy()}
                 
@@ -689,6 +709,7 @@ class NuscMVDetDataset(Dataset):
         else:
             gt_boxes = sweep_imgs.new_zeros(0, 7)
             gt_labels = sweep_imgs.new_zeros(0, )
+        
         # image = self.visual_tool(debug_dict["image"], gt_boxes.numpy(), debug_dict["sweepego2sweepsensor"], debug_dict["intrin_mat"])
         # cv2.imwrite("debug_image.jpg", image)
         # time.sleep(20)
