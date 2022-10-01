@@ -34,7 +34,8 @@ backbone_conf = {
     'x_bound': [-51.2, 51.2, 0.8],
     'y_bound': [-51.2, 51.2, 0.8],
     'z_bound': [-5, 3, 8],
-    'd_bound': [-3.0, 5.0, 0.05],
+    # 'd_bound': [-3.0, 5.0, 0.05],
+    'd_bound': [-3.5, 4.5, 0.05],
     'final_dim':
     final_dim,
     'output_channels':
@@ -220,14 +221,14 @@ class BEVDepthLightningModel(LightningModule):
                                             output_dir=self.default_root_dir)
         self.model = BEVDepth(self.backbone_conf,
                               self.head_conf,
-                              is_train_depth=True)
+                              is_train_depth=False)
         self.mode = 'valid'
         self.img_conf = img_conf
         self.data_use_cbgs = False
         self.num_sweeps = 1
         self.sweep_idxes = list()
         self.key_idxes = list()
-        self.data_return_depth = True
+        self.data_return_depth = False
         self.downsample_factor = self.backbone_conf['downsample_factor']
         self.dbound = self.backbone_conf['d_bound']
         self.depth_channels = int(
@@ -462,7 +463,6 @@ def main(args: Namespace) -> None:
         for ckpt_name in os.listdir(args.ckpt_path):
             model_path = os.path.join(args.ckpt_path, ckpt_name)
             trainer.test(model, ckpt_path=model_path)
-            os.remove(model_path)
     else:
         trainer.fit(model)
 

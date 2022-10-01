@@ -59,7 +59,8 @@ def map_pointcloud_to_image(
     points_sensor = pc.points.copy()
     points_sensor[3,:] = 1.0
     points_virtual = np.matmul(sensor2virtual, points_sensor)
-    h_offsets = points_virtual[1, :] - height_ref
+    # h_offsets = points_virtual[1, :] - height_ref
+    h_virtual = points_virtual[1, :]
     # Fifth step: actually take a "picture" of the point cloud.
     # Grab the depths (camera frame z axis points away from the camera).
     depths = pc.points[2, :]
@@ -84,9 +85,9 @@ def map_pointcloud_to_image(
     mask = np.logical_and(mask, points[1, :] < im.shape[0] - 1)
     points = points[:, mask]
     coloring = coloring[mask]
-    h_offsets = h_offsets[mask]
+    h_virtual = h_virtual[mask]
 
-    return points, coloring, h_offsets
+    return points, coloring, h_virtual
 
 data_root = 'data/nuScenes'
 info_path = 'data/nuScenes/nuscenes_12hz_infos_train.pkl'
@@ -111,7 +112,7 @@ def worker(info):
         cam_ego_pose = info['cam_infos'][cam_key]['ego_pose']
         img = mmcv.imread(
             os.path.join(data_root, info['cam_infos'][cam_key]['filename']))
-        pts_img, depth, h_offsets = map_pointcloud_to_image(
+        pts_img, depth, h_virtual = map_pointcloud_to_image(
             points.copy(), img, lidar_calibrated_sensor.copy(),
             lidar_ego_pose.copy(), cam_calibrated_sensor, cam_ego_pose)
         file_name = os.path.split(info['cam_infos'][cam_key]['filename'])[-1]
@@ -121,7 +122,7 @@ def worker(info):
                            os.path.join(data_root, 'depth_gt',
                                         f'{file_name}.bin'))
         '''               
-        np.concatenate([pts_img[:2, :].T, h_offsets[:, None]],
+        np.concatenate([pts_img[:2, :].T, h_virtual[:, None]],
                        axis=1).astype(np.float32).flatten().tofile(
                            os.path.join(data_root, 'height_gt',
                                         f'{file_name}.bin'))
