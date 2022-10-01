@@ -76,7 +76,8 @@ if __name__ == '__main__':
         points[:, 3] = 1.0
         camera_points = np.matmul(lidar2cam, points.T).T
         virtual_points = np.matmul(cam2virtual, camera_points.T).T
-        height_offsets = virtual_points[:, 1] - height_ref
+        virtual_height = virtual_points[:, 1]
+        # height_offsets = virtual_points[:, 1] - height_ref
         
         depths = camera_points[:, 2]
         P = np.eye(4)
@@ -93,7 +94,7 @@ if __name__ == '__main__':
         mask = np.logical_and(mask, img_poins[1, :] < img_shape[0] - 1)
         img_poins = img_poins[:, mask].astype(np.int32)
         depths = depths[mask]
-        height_offsets = height_offsets[mask]
+        virtual_height = virtual_height[mask]
         img_path = os.path.join(data_root, info["sample_token"])
         # img = cv2.imread(img_path)
         # img[img_poins[1,:], img_poins[0,:], 0] = 255
@@ -109,7 +110,7 @@ if __name__ == '__main__':
                            os.path.join(data_root, 'depth_gt',
                                         f'{sample_id}.jpg.bin'))
                        
-        np.concatenate([img_poins[:2, :].T, height_offsets[:, None]],
+        np.concatenate([img_poins[:2, :].T, virtual_height[:, None]],
                        axis=1).astype(np.float32).flatten().tofile(
                            os.path.join(data_root, 'height_gt',
                                         f'{sample_id}.jpg.bin'))

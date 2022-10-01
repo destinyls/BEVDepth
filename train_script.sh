@@ -1,2 +1,2 @@
-CUDA_VISIBLE_DEVICES=2,3,4,5,6 python exps/bev_depth_lss_r50_256x704_128x128_24e.py --amp_backend native -b 6 --gpus 5
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6 python exps/bev_depth_lss_r50_256x704_128x128_24e.py --amp_backend native -b 7 --gpus 6
 python exps/bev_depth_lss_r50_256x704_128x128_24e.py --ckpt outputs/bev_depth_lss_r50_256x704_128x128_24e/checkpoints/ -e -b 1 --gpus 7

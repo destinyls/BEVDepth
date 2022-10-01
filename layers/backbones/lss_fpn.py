@@ -328,9 +328,13 @@ class LSSFPN(nn.Module):
     
     def height2localtion(self, points, sensor2ego_mat, sensor2virtual_mat, intrin_mat, reference_heights):
         batch_size, num_cams, _, _ = sensor2ego_mat.shape
+        '''
         reference_heights = reference_heights.view(batch_size, num_cams, 1, 1, 1, 1,
                                                    1).repeat(1, 1, points.shape[2], points.shape[3], points.shape[4], 1, 1)
         height = points[:, :, :, :, :, 2, :] + reference_heights[:, :, :, :, :, 0, :]
+        '''
+        height = points[:, :, :, :, :, 2, :]
+        
         points_const = points.clone()
         points_const[:, :, :, :, :, 2, :] = 10
         points_const = torch.cat(
