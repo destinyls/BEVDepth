@@ -87,6 +87,24 @@ def get_rot(h):
         [-np.sin(h), np.cos(h)],
     ])
 
+def img_intrin_extrin_transform(img, ratio, roll, transform_pitch, intrin_mat):
+    center = intrin_mat[:2, 2].astype(np.int32) 
+    center = (int(center[0]), int(center[1]))
+
+    W, H = img.size[0], img.size[1]
+    new_W, new_H = (int(W * ratio), int(H * ratio))
+    img = img.resize((new_W, new_H), Image.ANTIALIAS)
+    
+    h_min = int(center[1] * abs(1.0 - ratio))
+    w_min = int(center[0] * abs(1.0 - ratio))
+    if ratio <= 1.0:
+        image = Image.new(mode='RGB', size=(W, H))
+        image.paste(img, (w_min, h_min,  w_min + new_W, h_min + new_H))
+    else:
+        image = img.crop((w_min, h_min,  w_min + W, h_min + H))
+    img = image.rotate(-roll, expand=0, center=center, translate=(0, transform_pitch), fillcolor=(0,0,0), resample=Image.BICUBIC)
+    return img
+
 def img_transform(img, resize, resize_dims, crop, flip, rotate):
     ida_rot = torch.eye(2)
     ida_tran = torch.zeros(2)
@@ -251,6 +269,10 @@ class NuscMVDetDataset(Dataset):
             'All `key_idxes` must less than 0.'
         self.key_idxes = [0] + key_idxes
 
+        self.ratio_range = [1.0, 1.0]
+        self.roll_range = [-0.0, 0.0]
+        self.pitch_range = [-0.0, 0.0]
+
     def _get_sample_indices(self):
         """Load annotations from ann_file.
 
@@ -286,18 +308,61 @@ class NuscMVDetDataset(Dataset):
                                                    ratio)).tolist()
         return sample_indices
 
+    def sample_intrin_extrin_augmentation(self, intrin_mat, sweepego2sweepsensor):
+        intrin_mat, sweepego2sweepsensor = intrin_mat.numpy(), sweepego2sweepsensor.numpy()
+        # rectify intrin_mat
+        ratio = np.random.uniform(self.ratio_range[0], self.ratio_range[1])
+        intrin_mat_rectify = intrin_mat.copy()
+        intrin_mat_rectify[:2,:2] = intrin_mat[:2,:2] * ratio
+        
+        # rectify sweepego2sweepsensor by roll
+        roll = np.random.uniform(self.roll_range[0], self.roll_range[1])
+        roll_rad = self.degree2rad(roll)
+        rectify_roll = np.array([[math.cos(roll_rad), -math.sin(roll_rad), 0, 0], 
+                                 [math.sin(roll_rad), math.cos(roll_rad), 0, 0], 
+                                 [0, 0, 1, 0],
+                                 [0, 0, 0, 1]])
+        sweepego2sweepsensor_rectify_roll = np.matmul(rectify_roll, sweepego2sweepsensor)
+        
+        # rectify sweepego2sweepsensor by pitch
+        pitch = np.random.uniform(self.pitch_range[0], self.pitch_range[1])
+        pitch_rad = self.degree2rad(pitch)
+        rectify_pitch = np.array([[1, 0, 0, 0],
+                                  [0,math.cos(pitch_rad), -math.sin(pitch_rad), 0], 
+                                  [0,math.sin(pitch_rad), math.cos(pitch_rad), 0],
+                                  [0, 0, 0, 1]])
+        sweepego2sweepsensor_rectify_pitch = np.matmul(rectify_pitch, sweepego2sweepsensor_rectify_roll)
+        M = self.get_M(sweepego2sweepsensor_rectify_roll[:3,:3], intrin_mat_rectify[:3,:3], sweepego2sweepsensor_rectify_pitch[:3,:3], intrin_mat_rectify[:3,:3])
+        center = intrin_mat_rectify[:2, 2]  # w, h
+        center_ref = np.array([center[0], center[1], 1.0])
+        center_ref = np.matmul(M, center_ref.T)[:2]
+        transform_pitch = int(center_ref[1] - center[1])
+
+        intrin_mat_rectify, sweepego2sweepsensor_rectify = torch.Tensor(intrin_mat_rectify), torch.Tensor(sweepego2sweepsensor_rectify_pitch)
+        return intrin_mat_rectify, sweepego2sweepsensor_rectify, ratio, roll, transform_pitch
+
+    def degree2rad(self, degree):
+        return degree * np.pi / 180
+
+    def get_M(self, R, K, R_r, K_r):
+        R_inv = np.linalg.inv(R)
+        K_inv = np.linalg.inv(K)
+        M = np.matmul(K_r, R_r)
+        M = np.matmul(M, R_inv)
+        M = np.matmul(M, K_inv)
+        return M
+
     def sample_ida_augmentation(self):
         """Generate ida augmentation values based on ida_config."""
         H, W = self.ida_aug_conf['H'], self.ida_aug_conf['W']
         fH, fW = self.ida_aug_conf['final_dim']
         if self.is_train:
-            resize = np.random.uniform(*self.ida_aug_conf['resize_lim'])
+            resize = max(fH / H, fW / W)
             resize_dims = (int(W * resize), int(H * resize))
             newW, newH = resize_dims
             crop_h = int(
-                (1 - np.random.uniform(*self.ida_aug_conf['bot_pct_lim'])) *
-                newH) - fH
-            crop_w = int(np.random.uniform(0, max(0, newW - fW)))
+                (1 - np.mean(self.ida_aug_conf['bot_pct_lim'])) * newH) - fH
+            crop_w = int(max(0, newW - fW) / 2)
             crop = (crop_w, crop_h, crop_w + fW, crop_h + fH)
             flip = False
             if self.ida_aug_conf['rand_flip'] and np.random.choice([0, 1]):
@@ -386,8 +451,6 @@ class NuscMVDetDataset(Dataset):
                 sweepsensor2sweepego[:3, :3] = sweepsensor2sweepego_rot
                 sweepsensor2sweepego[:3, -1] = sweepsensor2sweepego_tran
                 
-                sweepego2sweepsensor = sweepsensor2sweepego.inverse()
-                denorm = get_denorm(sweepego2sweepsensor.numpy())
                 # sweep ego to global
                 w, x, y, z = cam_info[cam]['ego_pose']['rotation']
                 sweepego2global_rot = torch.Tensor(
@@ -398,6 +461,18 @@ class NuscMVDetDataset(Dataset):
                 sweepego2global[3, 3] = 1
                 sweepego2global[:3, :3] = sweepego2global_rot
                 sweepego2global[:3, -1] = sweepego2global_tran
+
+                intrin_mat = torch.zeros((4, 4))
+                intrin_mat[3, 3] = 1
+                intrin_mat[:3, :3] = torch.Tensor(
+                    cam_info[cam]['calibrated_sensor']['camera_intrinsic'])
+                sweepego2sweepsensor = sweepsensor2sweepego.inverse()
+                
+                if self.is_train:
+                    intrin_mat, sweepego2sweepsensor, ratio, roll, transform_pitch = self.sample_intrin_extrin_augmentation(intrin_mat, sweepego2sweepsensor)
+                    img = img_intrin_extrin_transform(img, ratio, roll, transform_pitch, intrin_mat.numpy())
+                denorm = get_denorm(sweepego2sweepsensor.numpy())
+                sweepsensor2sweepego = sweepego2sweepsensor.inverse()
 
                 # global sensor to cur ego
                 w, x, y, z = key_info[cam]['ego_pose']['rotation']
