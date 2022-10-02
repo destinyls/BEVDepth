@@ -250,7 +250,15 @@ class NuscMVDetDataset(Dataset):
         """Generate ida augmentation values based on ida_config."""
         H, W = self.ida_aug_conf['H'], self.ida_aug_conf['W']
         fH, fW = self.ida_aug_conf['final_dim']
-        if self.is_train and False:
+        if self.is_train:
+            resize = max(fH / H, fW / W)
+            resize_dims = (int(W * resize), int(H * resize))
+            newW, newH = resize_dims
+            crop_h = int(
+                (1 - np.mean(self.ida_aug_conf['bot_pct_lim'])) * newH) - fH
+            crop_w = int(max(0, newW - fW) / 2)
+            crop = (crop_w, crop_h, crop_w + fW, crop_h + fH)
+            '''
             resize = np.random.uniform(*self.ida_aug_conf['resize_lim'])
             resize_dims = (int(W * resize), int(H * resize))
             newW, newH = resize_dims
@@ -259,6 +267,7 @@ class NuscMVDetDataset(Dataset):
                 newH) - fH
             crop_w = int(np.random.uniform(0, max(0, newW - fW)))
             crop = (crop_w, crop_h, crop_w + fW, crop_h + fH)
+            '''
             flip = False
             if self.ida_aug_conf['rand_flip'] and np.random.choice([0, 1]):
                 flip = True
@@ -271,6 +280,7 @@ class NuscMVDetDataset(Dataset):
                 (1 - np.mean(self.ida_aug_conf['bot_pct_lim'])) * newH) - fH
             crop_w = int(max(0, newW - fW) / 2)
             crop = (crop_w, crop_h, crop_w + fW, crop_h + fH)
+            
             flip = False
             rotate_ida = 0
         return resize, resize_dims, crop, flip, rotate_ida
