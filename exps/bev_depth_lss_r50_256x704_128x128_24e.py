@@ -2,6 +2,8 @@
 from argparse import ArgumentParser, Namespace
 
 import os
+import math
+
 import mmcv
 import pytorch_lightning as pl
 import torch
@@ -38,7 +40,6 @@ backbone_conf = {
     'x_bound': [0, 102.4, 0.8],
     'y_bound': [-51.2, 51.2, 0.8],
     'z_bound': [-5, 3, 8],
-     # 'd_bound': [-3.0, 5.0, 0.1],
      # 'd_bound': [2.5, 10.5, 0.1],
      'd_bound': [2.5, 10.5, 80],
     'final_dim':
@@ -222,18 +223,17 @@ class BEVDepthLightningModel(LightningModule):
                                             output_dir=self.default_root_dir)
         self.model = BEVDepth(self.backbone_conf,
                               self.head_conf,
-                              is_train_depth=False)
+                              is_train_depth=True)
         self.mode = 'valid'
         self.img_conf = img_conf
         self.data_use_cbgs = False
         self.num_sweeps = 1
         self.sweep_idxes = list()
         self.key_idxes = list()
-        self.data_return_depth = False
+        self.data_return_depth = True
         self.downsample_factor = self.backbone_conf['downsample_factor']
         self.dbound = self.backbone_conf['d_bound']
-        self.depth_channels = int(
-            (self.dbound[1] - self.dbound[0]) / self.dbound[2])
+        self.depth_channels = int(self.dbound[2])
 
     def forward(self, sweep_imgs, mats):
         return self.model(sweep_imgs, mats)
@@ -277,7 +277,7 @@ class BEVDepthLightningModel(LightningModule):
         depth_preds = depth_preds.permute(0, 2, 3, 1).contiguous().view(
             -1, self.depth_channels)
         fg_mask = torch.max(depth_labels, dim=1).values > 0.0
-
+        
         with autocast(enabled=False):
             depth_loss = (F.binary_cross_entropy(
                 depth_preds[fg_mask],
@@ -309,20 +309,26 @@ class BEVDepthLightningModel(LightningModule):
         gt_depths_tmp = torch.where(gt_depths == 0.0,
                                     1e5 * torch.ones_like(gt_depths),
                                     gt_depths)
+        gt_depths_tmp = torch.where(gt_depths_tmp <= self.dbound[0],
+                                    1e5 * torch.ones_like(gt_depths),
+                                    gt_depths_tmp)
+        
         gt_depths = torch.min(gt_depths_tmp, dim=-1).values
         gt_depths = gt_depths.view(B * N, H // self.downsample_factor,
                                    W // self.downsample_factor)
-
+        '''
         gt_depths = (gt_depths -
                      (self.dbound[0] - self.dbound[2])) / self.dbound[2]
-        
+        '''
+        gt_depths = self.dbound[2] * (torch.log(gt_depths) - math.log(self.dbound[0])) / (math.log(self.dbound[1]) - math.log(self.dbound[0]))
+        gt_depths = gt_depths.floor() + 1
         gt_depths = torch.where(
             (gt_depths < self.depth_channels + 1) & (gt_depths >= 0.0),
             gt_depths, torch.zeros_like(gt_depths))
+        
         gt_depths = F.one_hot(gt_depths.long(),
                               num_classes=self.depth_channels + 1).view(
                                   -1, self.depth_channels + 1)[:, 1:]
-
         return gt_depths.float()
 
     def eval_step(self, batch, batch_idx, prefix: str):
@@ -486,7 +492,7 @@ def run_cli():
     parser.set_defaults(
         profiler='simple',
         deterministic=False,
-        max_epochs=100,
+        max_epochs=150,
         accelerator='ddp',
         num_sanity_val_steps=0,
         gradient_clip_val=5,
