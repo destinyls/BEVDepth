@@ -1,4 +1,5 @@
 # Copyright (c) Megvii Inc. All rights reserved.
+import math
 import numpy as np
 
 import torch
@@ -310,9 +311,23 @@ class LSSFPN(nn.Module):
         # make grid in image plane
         ogfH, ogfW = self.final_dim
         fH, fW = ogfH // self.downsample_factor, ogfW // self.downsample_factor
+        # depth
+        '''
         d_coords = torch.arange(*self.d_bound,
                                 dtype=torch.float).view(-1, 1,
                                                         1).expand(-1, fH, fW)
+        '''
+        # height
+        range_num1 = int(self.d_bound[2] * abs(self.d_bound[0]) / (self.d_bound[1] - self.d_bound[0]))
+        range_num2 = self.d_bound[2] - range_num1
+        
+        d_coords1 = np.arange(range_num1) / range_num1 * (math.log(abs(self.d_bound[0])) - math.log(1e-3))
+        d_coords1 = -1 * np.flipud(np.exp(d_coords1 + math.log(1e-3)))
+        d_coords2 = np.arange(range_num2) / range_num2 * (math.log(abs(self.d_bound[1])) - math.log(1e-3))
+        d_coords2 = np.exp(d_coords2 + math.log(1e-3))
+        d_coords = np.concatenate([d_coords1, d_coords2], axis=0)
+        d_coords = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
+
         D, _, _ = d_coords.shape
         x_coords = torch.linspace(0, ogfW - 1, fW, dtype=torch.float).view(
             1, 1, fW).expand(D, fH, fW)
