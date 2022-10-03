@@ -317,7 +317,8 @@ class LSSFPN(nn.Module):
                                 dtype=torch.float).view(-1, 1,
                                                         1).expand(-1, fH, fW)
         '''
-        # height
+        # height SID style
+        '''
         range_num1 = int(self.d_bound[2] * abs(self.d_bound[0]) / (self.d_bound[1] - self.d_bound[0]))
         range_num2 = self.d_bound[2] - range_num1
         
@@ -326,6 +327,28 @@ class LSSFPN(nn.Module):
         d_coords2 = np.arange(range_num2) / range_num2 * (math.log(abs(self.d_bound[1])) - math.log(1e-3))
         d_coords2 = np.exp(d_coords2 + math.log(1e-3))
         d_coords = np.concatenate([d_coords1, d_coords2], axis=0)
+        d_coords = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
+        '''
+        # height LID style
+        min_height, min_num = 0.5, 40
+        lid_num = self.d_bound[2] - 2 * min_num
+        range_num1 = int(lid_num * abs(self.d_bound[0]) / (self.d_bound[1] - self.d_bound[0]))
+        range_num2 = lid_num - range_num1
+
+        delta = 2 * (abs(self.d_bound[0]) - min_height) / (range_num1 * (1 + range_num1))
+        d_coords1 = ((np.arange(range_num1) + 0.5) * 2)**2
+        d_coords1 = (d_coords1 - 1) * delta / 8 + min_height
+        d_coords1 = -1 * np.flipud(d_coords1)
+
+        delta = 2 * (abs(self.d_bound[1]) - min_height) / (range_num2 * (1 + range_num2))
+        d_coords2 = ((np.arange(range_num2) + 0.5) * 2)**2
+        d_coords2 = (d_coords2 - 1) * delta / 8 + min_height
+
+        mid_coords1 = (np.arange(min_num) * min_height / min_num)
+        mid_coords1 = -1 * np.flipud(mid_coords1)
+        mid_coords2 = (np.arange(min_num) * min_height / min_num)
+        mid_coords1[-1], mid_coords2[0] = mid_coords1[-2] / 2, mid_coords2[1] / 2
+        d_coords = np.concatenate([d_coords1, mid_coords1, mid_coords2, d_coords2], axis=0)
         d_coords = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
 
         D, _, _ = d_coords.shape
