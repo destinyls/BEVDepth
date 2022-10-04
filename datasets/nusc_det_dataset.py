@@ -4,12 +4,13 @@ import mmcv
 import numpy as np
 import torch
 from mmdet3d.core.bbox.structures.lidar_box3d import LiDARInstance3DBoxes
-from nuscenes.utils.data_classes import Box
+from nuscenes.utils.data_classes import Box, LidarPointCloud
+from nuscenes.utils.geometry_utils import view_points
 from PIL import Image
 from pyquaternion import Quaternion
 from torch.utils.data import Dataset
 
-__all__ = ['NuscMVDetDataset']
+__all__ = ['NuscDetDataset']
 
 map_name_from_general_to_detection = {
     'human.pedestrian.adult': 'pedestrian',
@@ -151,13 +152,75 @@ def depth_transform(cam_depth, resize, resize_dims, crop, flip, rotate):
     return torch.Tensor(depth_map)
 
 
-class NuscMVDetDataset(Dataset):
+def map_pointcloud_to_image(
+    lidar_points,
+    img,
+    lidar_calibrated_sensor,
+    lidar_ego_pose,
+    cam_calibrated_sensor,
+    cam_ego_pose,
+    min_dist: float = 0.0,
+):
+
+    # Points live in the point sensor frame. So they need to be
+    # transformed via global to the image plane.
+    # First step: transform the pointcloud to the ego vehicle
+    # frame for the timestamp of the sweep.
+
+    lidar_points = LidarPointCloud(lidar_points.T)
+    lidar_points.rotate(
+        Quaternion(lidar_calibrated_sensor['rotation']).rotation_matrix)
+    lidar_points.translate(np.array(lidar_calibrated_sensor['translation']))
+
+    # Second step: transform from ego to the global frame.
+    lidar_points.rotate(Quaternion(lidar_ego_pose['rotation']).rotation_matrix)
+    lidar_points.translate(np.array(lidar_ego_pose['translation']))
+
+    # Third step: transform from global into the ego vehicle
+    # frame for the timestamp of the image.
+    lidar_points.translate(-np.array(cam_ego_pose['translation']))
+    lidar_points.rotate(Quaternion(cam_ego_pose['rotation']).rotation_matrix.T)
+
+    # Fourth step: transform from ego into the camera.
+    lidar_points.translate(-np.array(cam_calibrated_sensor['translation']))
+    lidar_points.rotate(
+        Quaternion(cam_calibrated_sensor['rotation']).rotation_matrix.T)
+
+    # Fifth step: actually take a "picture" of the point cloud.
+    # Grab the depths (camera frame z axis points away from the camera).
+    depths = lidar_points.points[2, :]
+    coloring = depths
+
+    # Take the actual picture (matrix multiplication with camera-matrix
+    # + renormalization).
+    points = view_points(lidar_points.points[:3, :],
+                         np.array(cam_calibrated_sensor['camera_intrinsic']),
+                         normalize=True)
+
+    # Remove points that are either outside or behind the camera.
+    # Leave a margin of 1 pixel for aesthetic reasons. Also make
+    # sure points are at least 1m in front of the camera to avoid
+    # seeing the lidar points on the camera casing for non-keyframes
+    # which are slightly out of sync.
+    mask = np.ones(depths.shape[0], dtype=bool)
+    mask = np.logical_and(mask, depths > min_dist)
+    mask = np.logical_and(mask, points[0, :] > 1)
+    mask = np.logical_and(mask, points[0, :] < img.size[0] - 1)
+    mask = np.logical_and(mask, points[1, :] > 1)
+    mask = np.logical_and(mask, points[1, :] < img.size[1] - 1)
+    points = points[:, mask]
+    coloring = coloring[mask]
+
+    return points, coloring
+
+
+class NuscDetDataset(Dataset):
     def __init__(self,
                  ida_aug_conf,
                  bda_aug_conf,
                  classes,
                  data_root,
-                 info_path,
+                 info_paths,
                  is_train,
                  use_cbgs=False,
                  num_sweeps=1,
@@ -166,7 +229,8 @@ class NuscMVDetDataset(Dataset):
                                to_rgb=True),
                  return_depth=False,
                  sweep_idxes=list(),
-                 key_idxes=list()):
+                 key_idxes=list(),
+                 use_fusion=False):
         """Dataset used for bevdetection task.
         Args:
             ida_aug_conf (dict): Config for ida augmentation.
@@ -183,9 +247,16 @@ class NuscMVDetDataset(Dataset):
                 default: list().
             key_idxes (list): List of key idxes to be used.
                 default: list().
+            use_fusion (bool): Whether to use lidar data.
+                default: False.
         """
         super().__init__()
-        self.infos = mmcv.load(info_path)
+        if isinstance(info_paths, list):
+            self.infos = list()
+            for info_path in info_paths:
+                self.infos.extend(mmcv.load(info_path))
+        else:
+            self.infos = mmcv.load(info_paths)
         self.is_train = is_train
         self.ida_aug_conf = ida_aug_conf
         self.bda_aug_conf = bda_aug_conf
@@ -208,6 +279,7 @@ class NuscMVDetDataset(Dataset):
         assert sum([key_idx < 0 for key_idx in key_idxes]) == len(key_idxes),\
             'All `key_idxes` must less than 0.'
         self.key_idxes = [0] + key_idxes
+        self.use_fusion = use_fusion
 
     def _get_sample_indices(self):
         """Load annotations from ann_file.
@@ -287,7 +359,18 @@ class NuscMVDetDataset(Dataset):
             flip_dy = False
         return rotate_bda, scale_bda, flip_dx, flip_dy
 
-    def get_image(self, cam_infos, cams):
+    def get_lidar_depth(self, lidar_points, img, lidar_info, cam_info):
+        lidar_calibrated_sensor = lidar_info['LIDAR_TOP']['calibrated_sensor']
+        lidar_ego_pose = lidar_info['LIDAR_TOP']['ego_pose']
+        cam_calibrated_sensor = cam_info['calibrated_sensor']
+        cam_ego_pose = cam_info['ego_pose']
+        pts_img, depth = map_pointcloud_to_image(
+            lidar_points.copy(), img, lidar_calibrated_sensor.copy(),
+            lidar_ego_pose.copy(), cam_calibrated_sensor, cam_ego_pose)
+        return np.concatenate([pts_img[:2, :].T, depth[:, None]],
+                              axis=1).astype(np.float32)
+
+    def get_image(self, cam_infos, cams, lidar_infos=None):
         """Given data and cam_names, return image data needed.
 
         Args:
@@ -311,7 +394,16 @@ class NuscMVDetDataset(Dataset):
         sweep_ida_mats = list()
         sweep_sensor2sensor_mats = list()
         sweep_timestamps = list()
-        gt_depth = list()
+        sweep_lidar_depth = list()
+        if self.return_depth or self.use_fusion:
+            sweep_lidar_points = list()
+            for lidar_info in lidar_infos:
+                lidar_path = lidar_info['LIDAR_TOP']['filename']
+                lidar_points = np.fromfile(os.path.join(
+                    self.data_root, lidar_path),
+                                           dtype=np.float32,
+                                           count=-1).reshape(-1, 5)[..., :4]
+                sweep_lidar_points.append(lidar_points)
         for cam in cams:
             imgs = list()
             sensor2ego_mats = list()
@@ -319,6 +411,7 @@ class NuscMVDetDataset(Dataset):
             ida_mats = list()
             sensor2sensor_mats = list()
             timestamps = list()
+            lidar_depth = list()
             key_info = cam_infos[0]
             resize, resize_dims, crop, flip, \
                 rotate_ida = self.sample_ida_augmentation(
@@ -384,16 +477,14 @@ class NuscMVDetDataset(Dataset):
                 intrin_mat[3, 3] = 1
                 intrin_mat[:3, :3] = torch.Tensor(
                     cam_info[cam]['calibrated_sensor']['camera_intrinsic'])
-                if self.return_depth and sweep_idx == 0:
-                    file_name = os.path.split(cam_info[cam]['filename'])[-1]
-                    point_depth = np.fromfile(os.path.join(
-                        self.data_root, 'depth_gt', f'{file_name}.bin'),
-                                              dtype=np.float32,
-                                              count=-1).reshape(-1, 3)
+                if self.return_depth and (self.use_fusion or sweep_idx == 0):
+                    point_depth = self.get_lidar_depth(
+                        sweep_lidar_points[sweep_idx], img,
+                        lidar_infos[sweep_idx], cam_info[cam])
                     point_depth_augmented = depth_transform(
                         point_depth, resize, self.ida_aug_conf['final_dim'],
                         crop, flip, rotate_ida)
-                    gt_depth.append(point_depth_augmented)
+                    lidar_depth.append(point_depth_augmented)
                 img, ida_mat = img_transform(
                     img,
                     resize=resize,
@@ -415,6 +506,8 @@ class NuscMVDetDataset(Dataset):
             sweep_ida_mats.append(torch.stack(ida_mats))
             sweep_sensor2sensor_mats.append(torch.stack(sensor2sensor_mats))
             sweep_timestamps.append(torch.tensor(timestamps))
+            if self.return_depth:
+                sweep_lidar_depth.append(torch.stack(lidar_depth))
         # Get mean pose of all cams.
         ego2global_rotation = np.mean(
             [key_info[cam]['ego_pose']['rotation'] for cam in cams], 0)
@@ -436,7 +529,7 @@ class NuscMVDetDataset(Dataset):
             img_metas,
         ]
         if self.return_depth:
-            ret_list.append(torch.stack(gt_depth))
+            ret_list.append(torch.stack(sweep_lidar_depth).permute(1, 0, 2, 3))
         return ret_list
 
     def get_gt(self, info, cams):
@@ -505,6 +598,7 @@ class NuscMVDetDataset(Dataset):
         if self.use_cbgs:
             idx = self.sample_indices[idx]
         cam_infos = list()
+        lidar_infos = list()
         # TODO: Check if it still works when number of cameras is reduced.
         cams = self.choose_cams()
         for key_idx in self.key_idxes:
@@ -518,19 +612,37 @@ class NuscMVDetDataset(Dataset):
                 cur_idx = idx
             info = self.infos[cur_idx]
             cam_infos.append(info['cam_infos'])
+            lidar_infos.append(info['lidar_infos'])
+            lidar_sweep_timestamps = [
+                lidar_sweep['LIDAR_TOP']['timestamp']
+                for lidar_sweep in info['lidar_sweeps']
+            ]
             for sweep_idx in self.sweeps_idx:
-                if len(info['sweeps']) == 0:
+                if len(info['cam_sweeps']) == 0:
                     cam_infos.append(info['cam_infos'])
+                    lidar_infos.append(info['lidar_infos'])
                 else:
                     # Handle scenarios when current sweep doesn't have all
                     # cam keys.
-                    for i in range(min(len(info['sweeps']) - 1, sweep_idx), -1,
-                                   -1):
-                        if sum([cam in info['sweeps'][i]
+                    for i in range(min(len(info['cam_sweeps']) - 1, sweep_idx),
+                                   -1, -1):
+                        if sum([cam in info['cam_sweeps'][i]
                                 for cam in cams]) == len(cams):
-                            cam_infos.append(info['sweeps'][i])
+                            cam_infos.append(info['cam_sweeps'][i])
+                            cam_timestamp = np.mean([
+                                val['timestamp']
+                                for val in info['cam_sweeps'][i].values()
+                            ])
+                            # Find the closest lidar frame to the cam frame.
+                            lidar_idx = np.abs(lidar_sweep_timestamps -
+                                               cam_timestamp).argmin()
+                            lidar_infos.append(info['lidar_sweeps'][lidar_idx])
                             break
-        image_data_list = self.get_image(cam_infos, cams)
+        if self.return_depth or self.use_fusion:
+            image_data_list = self.get_image(cam_infos, cams, lidar_infos)
+
+        else:
+            image_data_list = self.get_image(cam_infos, cams)
         ret_list = list()
         (
             sweep_imgs,

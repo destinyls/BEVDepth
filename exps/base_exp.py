@@ -1,8 +1,7 @@
 # Copyright (c) Megvii Inc. All rights reserved.
-from argparse import ArgumentParser, Namespace
+from functools import partial
 
 import mmcv
-import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
 import torch.nn.parallel
@@ -13,9 +12,9 @@ from pytorch_lightning.core import LightningModule
 from torch.cuda.amp.autocast_mode import autocast
 from torch.optim.lr_scheduler import MultiStepLR
 
-from dataset.nusc_mv_det_dataset import NuscMVDetDataset, collate_fn
-from evaluators.det_mv_evaluators import DetMVNuscEvaluator
-from models.bev_depth import BEVDepth
+from datasets.nusc_det_dataset import NuscDetDataset, collate_fn
+from evaluators.det_evaluators import DetNuscEvaluator
+from models.base_bev_depth import BaseBEVDepth
 from utils.torch_dist import all_gather_object, get_rank, synchronize
 
 H = 900
@@ -211,11 +210,11 @@ class BEVDepthLightningModel(LightningModule):
         self.bda_aug_conf = bda_aug_conf
         mmcv.mkdir_or_exist(default_root_dir)
         self.default_root_dir = default_root_dir
-        self.evaluator = DetMVNuscEvaluator(class_names=self.class_names,
-                                            output_dir=self.default_root_dir)
-        self.model = BEVDepth(self.backbone_conf,
-                              self.head_conf,
-                              is_train_depth=True)
+        self.evaluator = DetNuscEvaluator(class_names=self.class_names,
+                                          output_dir=self.default_root_dir)
+        self.model = BaseBEVDepth(self.backbone_conf,
+                                  self.head_conf,
+                                  is_train_depth=True)
         self.mode = 'valid'
         self.img_conf = img_conf
         self.data_use_cbgs = False
@@ -227,6 +226,10 @@ class BEVDepthLightningModel(LightningModule):
         self.dbound = self.backbone_conf['d_bound']
         self.depth_channels = int(
             (self.dbound[1] - self.dbound[0]) / self.dbound[2])
+        self.use_fusion = False
+        self.train_info_paths = 'data/nuScenes/nuscenes_infos_train.pkl'
+        self.val_info_paths = 'data/nuScenes/nuscenes_infos_val.pkl'
+        self.predict_info_paths = 'data/nuScenes/nuscenes_infos_test.pkl'
 
     def forward(self, sweep_imgs, mats):
         return self.model(sweep_imgs, mats)
@@ -373,21 +376,19 @@ class BEVDepthLightningModel(LightningModule):
         return [[optimizer], [scheduler]]
 
     def train_dataloader(self):
-        train_dataset = NuscMVDetDataset(
-            ida_aug_conf=self.ida_aug_conf,
-            bda_aug_conf=self.bda_aug_conf,
-            classes=self.class_names,
-            data_root=self.data_root,
-            info_path='data/nuScenes/nuscenes_12hz_infos_train.pkl',
-            is_train=True,
-            use_cbgs=self.data_use_cbgs,
-            img_conf=self.img_conf,
-            num_sweeps=self.num_sweeps,
-            sweep_idxes=self.sweep_idxes,
-            key_idxes=self.key_idxes,
-            return_depth=self.data_return_depth,
-        )
-        from functools import partial
+        train_dataset = NuscDetDataset(ida_aug_conf=self.ida_aug_conf,
+                                       bda_aug_conf=self.bda_aug_conf,
+                                       classes=self.class_names,
+                                       data_root=self.data_root,
+                                       info_paths=self.train_info_paths,
+                                       is_train=True,
+                                       use_cbgs=self.data_use_cbgs,
+                                       img_conf=self.img_conf,
+                                       num_sweeps=self.num_sweeps,
+                                       sweep_idxes=self.sweep_idxes,
+                                       key_idxes=self.key_idxes,
+                                       return_depth=self.data_return_depth,
+                                       use_fusion=self.use_fusion)
 
         train_loader = torch.utils.data.DataLoader(
             train_dataset,
@@ -396,30 +397,30 @@ class BEVDepthLightningModel(LightningModule):
             drop_last=True,
             shuffle=False,
             collate_fn=partial(collate_fn,
-                               is_return_depth=self.data_return_depth),
+                               is_return_depth=self.data_return_depth
+                               or self.use_fusion),
             sampler=None,
         )
         return train_loader
 
     def val_dataloader(self):
-        val_dataset = NuscMVDetDataset(
-            ida_aug_conf=self.ida_aug_conf,
-            bda_aug_conf=self.bda_aug_conf,
-            classes=self.class_names,
-            data_root=self.data_root,
-            info_path='data/nuScenes/nuscenes_12hz_infos_val.pkl',
-            is_train=False,
-            img_conf=self.img_conf,
-            num_sweeps=self.num_sweeps,
-            sweep_idxes=self.sweep_idxes,
-            key_idxes=self.key_idxes,
-            return_depth=False,
-        )
+        val_dataset = NuscDetDataset(ida_aug_conf=self.ida_aug_conf,
+                                     bda_aug_conf=self.bda_aug_conf,
+                                     classes=self.class_names,
+                                     data_root=self.data_root,
+                                     info_paths=self.val_info_paths,
+                                     is_train=False,
+                                     img_conf=self.img_conf,
+                                     num_sweeps=self.num_sweeps,
+                                     sweep_idxes=self.sweep_idxes,
+                                     key_idxes=self.key_idxes,
+                                     return_depth=self.use_fusion,
+                                     use_fusion=self.use_fusion)
         val_loader = torch.utils.data.DataLoader(
             val_dataset,
             batch_size=self.batch_size_per_device,
             shuffle=False,
-            collate_fn=collate_fn,
+            collate_fn=partial(collate_fn, is_return_depth=self.use_fusion),
             num_workers=4,
             sampler=None,
         )
@@ -428,55 +429,35 @@ class BEVDepthLightningModel(LightningModule):
     def test_dataloader(self):
         return self.val_dataloader()
 
+    def predict_dataloader(self):
+        predict_dataset = NuscDetDataset(ida_aug_conf=self.ida_aug_conf,
+                                         bda_aug_conf=self.bda_aug_conf,
+                                         classes=self.class_names,
+                                         data_root=self.data_root,
+                                         info_paths=self.predict_info_paths,
+                                         is_train=False,
+                                         img_conf=self.img_conf,
+                                         num_sweeps=self.num_sweeps,
+                                         sweep_idxes=self.sweep_idxes,
+                                         key_idxes=self.key_idxes,
+                                         return_depth=self.use_fusion,
+                                         use_fusion=self.use_fusion)
+        predict_loader = torch.utils.data.DataLoader(
+            predict_dataset,
+            batch_size=self.batch_size_per_device,
+            shuffle=False,
+            collate_fn=partial(collate_fn, is_return_depth=self.use_fusion),
+            num_workers=4,
+            sampler=None,
+        )
+        return predict_loader
+
     def test_step(self, batch, batch_idx):
         return self.eval_step(batch, batch_idx, 'test')
+
+    def predict_step(self, batch, batch_idx):
+        return self.eval_step(batch, batch_idx, 'predict')
 
     @staticmethod
     def add_model_specific_args(parent_parser):  # pragma: no-cover
         return parent_parser
-
-
-def main(args: Namespace) -> None:
-    if args.seed is not None:
-        pl.seed_everything(args.seed)
-
-    model = BEVDepthLightningModel(**vars(args))
-    trainer = pl.Trainer.from_argparse_args(args)
-    if args.evaluate:
-        trainer.test(model, ckpt_path=args.ckpt_path)
-    else:
-        trainer.fit(model)
-
-
-def run_cli():
-    parent_parser = ArgumentParser(add_help=False)
-    parent_parser = pl.Trainer.add_argparse_args(parent_parser)
-    parent_parser.add_argument('-e',
-                               '--evaluate',
-                               dest='evaluate',
-                               action='store_true',
-                               help='evaluate model on validation set')
-    parent_parser.add_argument('-b', '--batch_size_per_device', type=int)
-    parent_parser.add_argument('--seed',
-                               type=int,
-                               default=0,
-                               help='seed for initializing training.')
-    parent_parser.add_argument('--ckpt_path', type=str)
-    parser = BEVDepthLightningModel.add_model_specific_args(parent_parser)
-    parser.set_defaults(
-        profiler='simple',
-        deterministic=False,
-        max_epochs=24,
-        accelerator='ddp',
-        num_sanity_val_steps=0,
-        gradient_clip_val=5,
-        limit_val_batches=0,
-        enable_checkpointing=True,
-        precision=16,
-        default_root_dir='./outputs/bev_depth_lss_r50_256x704_128x128_24e')
-    args = parser.parse_args()
-    main(args)
-
-
-if __name__ == '__main__':
-    run_cli()
