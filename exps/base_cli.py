@@ -4,6 +4,7 @@ from argparse import ArgumentParser
 
 import pytorch_lightning as pl
 
+from pytorch_lightning.callbacks import ModelCheckpoint
 from callbacks.ema import EMACallback
 from utils.torch_dist import all_gather_object, synchronize
 
@@ -51,11 +52,14 @@ def run_cli(model_class=BEVDepthLightningModel,
         train_dataloader = model.train_dataloader()
         ema_callback = EMACallback(
             len(train_dataloader.dataset) * args.max_epochs)
-        trainer = pl.Trainer.from_argparse_args(args, callbacks=[ema_callback])
+        checkpoint_callback = ModelCheckpoint(dirpath=os.path.join('./outputs', exp_name, "checkpoints"), filename='{epoch}', every_n_epochs=6, save_top_k=-1)
+        trainer = pl.Trainer.from_argparse_args(args, callbacks=[ema_callback, checkpoint_callback])
     else:
         trainer = pl.Trainer.from_argparse_args(args)
     if args.evaluate:
-        trainer.test(model, ckpt_path=args.ckpt_path)
+        for ckpt_name in os.listdir(args.ckpt_path):
+            model_path = os.path.join(args.ckpt_path, ckpt_name)
+            trainer.test(model, ckpt_path=model_path)
     elif args.predict:
         predict_step_outputs = trainer.predict(model, ckpt_path=args.ckpt_path)
         all_pred_results = list()

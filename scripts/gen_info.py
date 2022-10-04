@@ -129,7 +129,7 @@ def generate_info(nusc, scenes, max_cam_sweeps=6, max_lidar_sweeps=10):
             info['cam_sweeps'] = cam_sweeps
             info['lidar_sweeps'] = lidar_sweeps
             ann_infos = list()
-            if hasattr(cur_sample, 'anns'):
+            if 'anns' in cur_sample.keys():
                 for ann in cur_sample['anns']:
                     ann_info = nusc.get('sample_annotation', ann)
                     velocity = nusc.box_velocity(ann_info['token'])
@@ -150,8 +150,8 @@ def main():
     trainval_nusc = NuScenes(version='v1.0-trainval',
                              dataroot='./data/nuScenes/',
                              verbose=True)
-    train_scenes = splits.train
-    val_scenes = splits.val
+    train_scenes = splits.mini_train
+    val_scenes = splits.mini_val
     train_infos = generate_info(trainval_nusc, train_scenes)
     val_infos = generate_info(trainval_nusc, val_scenes)
     mmcv.dump(train_infos, './data/nuScenes/nuscenes_infos_train.pkl')
