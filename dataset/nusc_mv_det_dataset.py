@@ -255,6 +255,10 @@ class NuscMVDetDataset(Dataset):
             'All `key_idxes` must less than 0.'
         self.key_idxes = [0] + key_idxes
         
+        self.cache_flag = False
+        self.cache_flag_index = -1
+        self.cache_bda_augmentation = None
+        
         self.ratio_range = [0.95, 1.05]
         self.roll_range = [-1.0, 1.0]
         self.pitch_range = [-0.5, 0.5]
@@ -415,7 +419,7 @@ class NuscMVDetDataset(Dataset):
         denorm = -1 * equation_plane(ground_points_cam)
         return denorm
 
-    def get_image(self, cam_infos, cams):
+    def get_image(self, cam_infos, cams, cache_flag):
         """Given data and cam_names, return image data needed.
 
         Args:
@@ -491,7 +495,8 @@ class NuscMVDetDataset(Dataset):
                     cam_info[cam]['calibrated_sensor']['camera_intrinsic'])
                 sweepego2sweepsensor = sweepsensor2sweepego.inverse()
                 
-                if self.is_train and random.random() < 0.5:
+                # if self.is_train and random.random() < 0.5:
+                if self.is_train and cache_flag:
                     intrin_mat, sweepego2sweepsensor, ratio, roll, transform_pitch = self.sample_intrin_extrin_augmentation(intrin_mat, sweepego2sweepsensor)
                     img = img_intrin_extrin_transform(img, ratio, roll, transform_pitch, intrin_mat.numpy())
                 denorm = get_denorm(sweepego2sweepsensor.numpy())
@@ -661,6 +666,9 @@ class NuscMVDetDataset(Dataset):
         return cams
 
     def __getitem__(self, idx):
+        if self.cache_flag and self.is_train:
+            idx = self.cache_flag_index
+
         if self.use_cbgs:
             idx = self.sample_indices[idx]
         cam_infos = list()
@@ -689,7 +697,7 @@ class NuscMVDetDataset(Dataset):
                                 for cam in cams]) == len(cams):
                             cam_infos.append(info['sweeps'][i])
                             break
-        image_data_list = self.get_image(cam_infos, cams)
+        image_data_list = self.get_image(cam_infos, cams, self.cache_flag)
         ret_list = list()
         (
             sweep_imgs,
@@ -710,8 +718,19 @@ class NuscMVDetDataset(Dataset):
             gt_boxes = sweep_imgs.new_zeros(0, 7)
             gt_labels = sweep_imgs.new_zeros(0, )
 
-        rotate_bda, scale_bda, flip_dx, flip_dy = self.sample_bda_augmentation(
-        )
+        if self.cache_flag and self.is_train:
+            rotate_bda, scale_bda, flip_dx, flip_dy = self.cache_bda_augmentation
+            self.cache_flag = False
+        elif self.is_train:
+            self.cache_bda_augmentation = self.sample_bda_augmentation(
+            )
+            rotate_bda, scale_bda, flip_dx, flip_dy = self.cache_bda_augmentation
+            self.cache_flag = True
+            self.cache_flag_index = idx
+        else:
+            rotate_bda, scale_bda, flip_dx, flip_dy = self.sample_bda_augmentation(
+            )
+       
         bda_mat = sweep_imgs.new_zeros(4, 4)
         bda_mat[3, 3] = 1
         gt_boxes, bda_rot = bev_transform(gt_boxes, rotate_bda, scale_bda,

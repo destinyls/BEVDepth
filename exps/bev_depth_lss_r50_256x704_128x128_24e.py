@@ -30,7 +30,7 @@ final_dim = (256, 704)
 '''
 H = 1080
 W = 1920
-final_dim = (384, 704)
+final_dim = (864, 1536)
 
 img_conf = dict(img_mean=[123.675, 116.28, 103.53],
                 img_std=[58.395, 57.12, 57.375],
@@ -187,6 +187,15 @@ head_conf = {
     'min_radius': 2,
 }
 
+self_training_conf = dict(type='SelfTraining',
+                     in_dim=80,
+                     proj_hidden_dim=2048,
+                     pred_hidden_dim=512,
+                     out_dim=2048,
+                     pc_range=[0, -51.2, -5, 102.4, 51.2, 3],
+                     bev_h=128,
+                     bev_w=128,
+                )
 
 class BEVDepthLightningModel(LightningModule):
     MODEL_NAMES = sorted(name for name in models.__dict__
@@ -200,6 +209,7 @@ class BEVDepthLightningModel(LightningModule):
                  batch_size_per_device=8,
                  class_names=CLASSES,
                  backbone_conf=backbone_conf,
+                 self_training_conf=self_training_conf,
                  head_conf=head_conf,
                  ida_aug_conf=ida_aug_conf,
                  bda_aug_conf=bda_aug_conf,
@@ -223,6 +233,7 @@ class BEVDepthLightningModel(LightningModule):
                                             output_dir=self.default_root_dir)
         self.model = BEVDepth(self.backbone_conf,
                               self.head_conf,
+                              self_training_conf,
                               is_train_depth=False)
         self.mode = 'valid'
         self.img_conf = img_conf
@@ -249,16 +260,20 @@ class BEVDepthLightningModel(LightningModule):
             sweep_imgs = sweep_imgs.cuda()
             gt_boxes = [gt_box.cuda() for gt_box in gt_boxes]
             gt_labels = [gt_label.cuda() for gt_label in gt_labels]
+
         if len(batch) == 7:
-            preds, depth_preds = self(sweep_imgs, mats)
+            preds, feature_map, depth_preds = self(sweep_imgs, mats)
         else:
-            preds = self(sweep_imgs, mats)
+            preds, feature_map = self(sweep_imgs, mats)
+            
         if isinstance(self.model, torch.nn.parallel.DistributedDataParallel):
             targets = self.model.module.get_targets(gt_boxes, gt_labels)
             detection_loss = self.model.module.loss(targets, preds)
+            simsiam_loss = self.model.module.simsiam(feature_map)
         else:
             targets = self.model.get_targets(gt_boxes, gt_labels)
             detection_loss = self.model.loss(targets, preds)
+            simsiam_loss = self.model.simsiam(feature_map)
         
         if len(batch) == 7:
             if len(depth_labels.shape) == 5:
@@ -266,11 +281,13 @@ class BEVDepthLightningModel(LightningModule):
                 depth_labels = depth_labels[:, 0, ...]
             depth_loss = self.get_depth_loss(depth_labels.cuda(), depth_preds)
             self.log('detection_loss', detection_loss)
+            self.log('simsiam_loss', simsiam_loss)
             self.log('depth_loss', depth_loss)
-            return detection_loss + depth_loss
+            return detection_loss + simsiam_loss + depth_loss
         else:
             self.log('detection_loss', detection_loss)
-            return detection_loss
+            self.log('simsiam_loss', simsiam_loss)
+            return detection_loss + simsiam_loss
             
     def get_depth_loss(self, depth_labels, depth_preds):
         depth_labels = self.get_downsampled_gt_depth(depth_labels)
