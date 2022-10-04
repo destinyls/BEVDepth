@@ -35,7 +35,7 @@ backbone_conf = {
     'y_bound': [-51.2, 51.2, 0.8],
     'z_bound': [-5, 3, 8],
     # 'd_bound': [-3.0, 5.0, 0.05],
-    'd_bound': [-7.0, 7.0, 200],
+    'd_bound': [-7.0, 7.0, 210],
     'final_dim':
     final_dim,
     'output_channels':
@@ -65,7 +65,7 @@ ida_aug_conf = {
     'resize_lim': (0.386, 0.55),
     'final_dim':
     final_dim,
-    'rot_lim': (-5.4, 5.4),
+    'rot_lim': (-0.0, 0.0),
     'H':
     H,
     'W':

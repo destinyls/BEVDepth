@@ -1,5 +1,6 @@
 import os
 import math
+import random
 import cv2
 
 import mmcv
@@ -269,9 +270,9 @@ class NuscMVDetDataset(Dataset):
             'All `key_idxes` must less than 0.'
         self.key_idxes = [0] + key_idxes
 
-        self.ratio_range = [1.0, 1.0]
-        self.roll_range = [-0.0, 0.0]
-        self.pitch_range = [-0.0, 0.0]
+        self.ratio_range = [0.95, 1.05]
+        self.roll_range = [-4.0, 4.0]
+        self.pitch_range = [-1.0, 1.0]
 
     def _get_sample_indices(self):
         """Load annotations from ann_file.
@@ -468,7 +469,7 @@ class NuscMVDetDataset(Dataset):
                     cam_info[cam]['calibrated_sensor']['camera_intrinsic'])
                 sweepego2sweepsensor = sweepsensor2sweepego.inverse()
                 
-                if self.is_train:
+                if self.is_train and random.random() < 0.5:
                     intrin_mat, sweepego2sweepsensor, ratio, roll, transform_pitch = self.sample_intrin_extrin_augmentation(intrin_mat, sweepego2sweepsensor)
                     img = img_intrin_extrin_transform(img, ratio, roll, transform_pitch, intrin_mat.numpy())
                 denorm = get_denorm(sweepego2sweepsensor.numpy())
@@ -507,10 +508,6 @@ class NuscMVDetDataset(Dataset):
                 sensor2sensor_mats.append(keysensor2sweepsensor)
                 sensor2virtual_mats.append(sensor2virtual)
 
-                intrin_mat = torch.zeros((4, 4))
-                intrin_mat[3, 3] = 1
-                intrin_mat[:3, :3] = torch.Tensor(
-                    cam_info[cam]['calibrated_sensor']['camera_intrinsic'])
                 if self.return_depth and sweep_idx == 0:
                     file_name = os.path.split(cam_info[cam]['filename'])[-1]
                     point_depth = np.fromfile(os.path.join(
