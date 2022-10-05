@@ -21,12 +21,16 @@ class BEVDepth(nn.Module):
     """
 
     # TODO: Reduce grid_conf and data_aug_conf
-    def __init__(self, backbone_conf, head_conf, self_training_conf, is_train_depth=False):
+    def __init__(self, backbone_conf, head_conf, self_training_conf=None, is_train_depth=False):
         super(BEVDepth, self).__init__()
         self.backbone = LSSFPN(**backbone_conf)
         self.head = BEVDepthHead(**head_conf)
-        self.simsiam = build_neck(self_training_conf)
         self.is_train_depth = is_train_depth
+        
+        self.is_ssl = False
+        if self_training_conf is not None:
+            self.simsiam = build_neck(self_training_conf)
+            self.is_ssl = True
 
     def forward(
         self,

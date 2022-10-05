@@ -259,9 +259,9 @@ class NuscMVDetDataset(Dataset):
         self.cache_flag_index = -1
         self.cache_bda_augmentation = None
         
-        self.ratio_range = [0.95, 1.05]
-        self.roll_range = [-1.0, 1.0]
-        self.pitch_range = [-0.5, 0.5]
+        self.ratio_range = [0.90, 1.10]
+        self.roll_range = [-3.0, 3.0]
+        self.pitch_range = [-1.0, 1.0]
 
     def _get_sample_indices(self):
         """Load annotations from ann_file.
@@ -697,7 +697,7 @@ class NuscMVDetDataset(Dataset):
                                 for cam in cams]) == len(cams):
                             cam_infos.append(info['sweeps'][i])
                             break
-        image_data_list = self.get_image(cam_infos, cams, self.cache_flag)
+        image_data_list = self.get_image(cam_infos, cams, ~self.cache_flag)
         ret_list = list()
         (
             sweep_imgs,
@@ -725,7 +725,7 @@ class NuscMVDetDataset(Dataset):
             self.cache_bda_augmentation = self.sample_bda_augmentation(
             )
             rotate_bda, scale_bda, flip_dx, flip_dy = self.cache_bda_augmentation
-            self.cache_flag = True
+            # self.cache_flag = True
             self.cache_flag_index = idx
         else:
             rotate_bda, scale_bda, flip_dx, flip_dy = self.sample_bda_augmentation(

@@ -189,9 +189,9 @@ head_conf = {
 
 self_training_conf = dict(type='SelfTraining',
                      in_dim=80,
-                     proj_hidden_dim=2048,
-                     pred_hidden_dim=512,
-                     out_dim=2048,
+                     proj_hidden_dim=512,
+                     pred_hidden_dim=128,
+                     out_dim=512,
                      pc_range=[0, -51.2, -5, 102.4, 51.2, 3],
                      bev_h=128,
                      bev_w=128,
@@ -233,7 +233,7 @@ class BEVDepthLightningModel(LightningModule):
                                             output_dir=self.default_root_dir)
         self.model = BEVDepth(self.backbone_conf,
                               self.head_conf,
-                              self_training_conf,
+                              self_training_conf=None,
                               is_train_depth=False)
         self.mode = 'valid'
         self.img_conf = img_conf
@@ -269,11 +269,11 @@ class BEVDepthLightningModel(LightningModule):
         if isinstance(self.model, torch.nn.parallel.DistributedDataParallel):
             targets = self.model.module.get_targets(gt_boxes, gt_labels)
             detection_loss = self.model.module.loss(targets, preds)
-            simsiam_loss = self.model.module.simsiam(feature_map)
+            simsiam_loss = self.model.module.simsiam(feature_map) if self.model.module.is_ssl else 0
         else:
             targets = self.model.get_targets(gt_boxes, gt_labels)
             detection_loss = self.model.loss(targets, preds)
-            simsiam_loss = self.model.simsiam(feature_map)
+            simsiam_loss = self.model.simsiam(feature_map) if self.model.is_ssl else 0
         
         if len(batch) == 7:
             if len(depth_labels.shape) == 5:
