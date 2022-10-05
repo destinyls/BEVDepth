@@ -1,4 +1,6 @@
 # Copyright (c) Megvii Inc. All rights reserved.
+import numpy as np
+
 import torch
 import torch.nn.functional as F
 from mmcv.cnn import build_conv_layer
@@ -307,9 +309,30 @@ class BaseLSSFPN(nn.Module):
         # make grid in image plane
         ogfH, ogfW = self.final_dim
         fH, fW = ogfH // self.downsample_factor, ogfW // self.downsample_factor
+        
+        # Uniform Distribution
+        '''
         d_coords = torch.arange(*self.d_bound,
                                 dtype=torch.float).view(-1, 1,
                                                         1).expand(-1, fH, fW)
+        '''
+        # PID      
+        alpha = 2
+        range_num1 = int(self.d_bound[2] * abs(self.d_bound[0]) / (self.d_bound[1] - self.d_bound[0]))
+        range_num2 = self.d_bound[2] - range_num1
+
+        d_min1, d_max1 = 0.005, abs(self.d_bound[0])
+        delta1 = np.arange(0, range_num1, 1) / range_num1
+        delta1 = np.power(delta1, alpha) 
+        d_coords1 = -1 * np.flipud(d_min1 + delta1 * (d_max1 - d_min1))
+        d_min2, d_max2 = 0.005, self.d_bound[1]
+        delta2 = np.arange(0, range_num2, 1) / range_num2
+        delta2 = np.power(delta2, alpha) 
+        d_coords2 = d_min2 + delta2 * (d_max2 - d_min2)
+
+        d_coords = np.concatenate([d_coords1, d_coords2], axis=0)
+        d_coords = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
+        
         D, _, _ = d_coords.shape
         x_coords = torch.linspace(0, ogfW - 1, fW, dtype=torch.float).view(
             1, 1, fW).expand(D, fH, fW)
@@ -321,10 +344,43 @@ class BaseLSSFPN(nn.Module):
         # D x H x W x 3
         frustum = torch.stack((x_coords, y_coords, d_coords, paddings), -1)
         return frustum
-
-    def get_geometry(self, sensor2ego_mat, intrin_mat, ida_mat, bda_mat):
+    
+    def height2localtion(self, points, sensor2ego_mat, sensor2virtual_mat, intrin_mat, reference_heights):
+        batch_size, num_cams, _, _ = sensor2ego_mat.shape
+        '''
+        reference_heights = reference_heights.view(batch_size, num_cams, 1, 1, 1, 1,
+                                                   1).repeat(1, 1, points.shape[2], points.shape[3], points.shape[4], 1, 1)
+        height = points[:, :, :, :, :, 2, :] + reference_heights[:, :, :, :, :, 0, :]
+        '''
+        height = points[:, :, :, :, :, 2, :]
+        points_const = points.clone()
+        points_const[:, :, :, :, :, 2, :] = 10
+        points_const = torch.cat(
+            (points_const[:, :, :, :, :, :2] * points_const[:, :, :, :, :, 2:3],
+             points_const[:, :, :, :, :, 2:]), 5)
+        combine_virtual = sensor2virtual_mat.matmul(torch.inverse(intrin_mat))
+        points_virtual = combine_virtual.view(batch_size, num_cams, 1, 1, 1, 4, 4).matmul(points_const)
+        ratio = height[:, :, :, :, :, 0] / points_virtual[:, :, :, :, :, 1, 0]
+        ratio = ratio.view(batch_size, num_cams, ratio.shape[2], ratio.shape[3], ratio.shape[4], 1, 1).repeat(1, 1, 1, 1, 1, 4, 1)
+        points = points_virtual * ratio
+        points[:, :, :, :, :, 3, :] = 1
+        combine_ego = sensor2ego_mat.matmul(torch.inverse(sensor2virtual_mat))
+        points = combine_ego.view(batch_size, num_cams, 1, 1, 1, 4,
+                              4).matmul(points)
+        return points
+        
+    def depth2location(self, points, sensor2ego_mat, intrin_mat):
+        batch_size, num_cams, _, _ = sensor2ego_mat.shape
+        points = torch.cat(
+            (points[:, :, :, :, :, :2] * points[:, :, :, :, :, 2:3],
+             points[:, :, :, :, :, 2:]), 5)
+        combine = sensor2ego_mat.matmul(torch.inverse(intrin_mat))
+        points = combine.view(batch_size, num_cams, 1, 1, 1, 4,
+                              4).matmul(points)
+        return points
+    
+    def get_geometry(self, sensor2ego_mat, sensor2virtual_mat, intrin_mat, ida_mat, reference_heights, bda_mat):
         """Transfer points from camera coord to ego coord.
-
         Args:
             rots(Tensor): Rotation matrix from camera to ego.
             trans(Tensor): Translation matrix from camera to ego.
@@ -332,25 +388,18 @@ class BaseLSSFPN(nn.Module):
             post_rots_ida(Tensor): Rotation matrix for ida.
             post_trans_ida(Tensor): Translation matrix for ida
             post_rot_bda(Tensor): Rotation matrix for bda.
-
         Returns:
             Tensors: points ego coord.
         """
         batch_size, num_cams, _, _ = sensor2ego_mat.shape
-
+        
         # undo post-transformation
         # B x N x D x H x W x 3
         points = self.frustum
         ida_mat = ida_mat.view(batch_size, num_cams, 1, 1, 1, 4, 4)
         points = ida_mat.inverse().matmul(points.unsqueeze(-1))
-        # cam_to_ego
-        points = torch.cat(
-            (points[:, :, :, :, :, :2] * points[:, :, :, :, :, 2:3],
-             points[:, :, :, :, :, 2:]), 5)
-
-        combine = sensor2ego_mat.matmul(torch.inverse(intrin_mat))
-        points = combine.view(batch_size, num_cams, 1, 1, 1, 4,
-                              4).matmul(points)
+        points = self.height2localtion(points, sensor2ego_mat, sensor2virtual_mat, intrin_mat, reference_heights) 
+        # points = self.depth2location(points, sensor2ego_mat, intrin_mat)
         if bda_mat is not None:
             bda_mat = bda_mat.unsqueeze(1).repeat(1, num_cams, 1, 1).view(
                 batch_size, num_cams, 1, 1, 1, 4, 4)
@@ -432,10 +481,13 @@ class BaseLSSFPN(nn.Module):
             img_feat_with_depth.shape[3],
             img_feat_with_depth.shape[4],
         )
+
         geom_xyz = self.get_geometry(
             mats_dict['sensor2ego_mats'][:, sweep_index, ...],
+            mats_dict['sensor2virtual_mats'][:, sweep_index, ...],
             mats_dict['intrin_mats'][:, sweep_index, ...],
             mats_dict['ida_mats'][:, sweep_index, ...],
+            mats_dict['reference_heights'][:, sweep_index, ...],
             mats_dict.get('bda_mat', None),
         )
         img_feat_with_depth = img_feat_with_depth.permute(0, 1, 3, 4, 5, 2)

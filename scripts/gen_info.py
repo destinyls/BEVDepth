@@ -150,8 +150,8 @@ def main():
     trainval_nusc = NuScenes(version='v1.0-trainval',
                              dataroot='./data/nuScenes/',
                              verbose=True)
-    train_scenes = splits.mini_train
-    val_scenes = splits.mini_val
+    train_scenes = splits.train
+    val_scenes = splits.val
     train_infos = generate_info(trainval_nusc, train_scenes)
     val_infos = generate_info(trainval_nusc, val_scenes)
     mmcv.dump(train_infos, './data/nuScenes/nuscenes_infos_train.pkl')

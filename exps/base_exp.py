@@ -28,7 +28,8 @@ backbone_conf = {
     'x_bound': [-51.2, 51.2, 0.8],
     'y_bound': [-51.2, 51.2, 0.8],
     'z_bound': [-5, 3, 8],
-    'd_bound': [2.0, 58.0, 0.5],
+     # 'd_bound': [2.0, 58.0, 0.5],
+    'd_bound': [-3.0, 7.0, 100],
     'final_dim':
     final_dim,
     'output_channels':
@@ -58,7 +59,7 @@ ida_aug_conf = {
     'resize_lim': (0.386, 0.55),
     'final_dim':
     final_dim,
-    'rot_lim': (-5.4, 5.4),
+    'rot_lim': (-0.0, 0.0),
     'H':
     H,
     'W':
@@ -214,14 +215,14 @@ class BEVDepthLightningModel(LightningModule):
                                           output_dir=self.default_root_dir)
         self.model = BaseBEVDepth(self.backbone_conf,
                                   self.head_conf,
-                                  is_train_depth=True)
+                                  is_train_depth=False)
         self.mode = 'valid'
         self.img_conf = img_conf
         self.data_use_cbgs = False
         self.num_sweeps = 1
         self.sweep_idxes = list()
         self.key_idxes = list()
-        self.data_return_depth = True
+        self.data_return_depth = False
         self.downsample_factor = self.backbone_conf['downsample_factor']
         self.dbound = self.backbone_conf['d_bound']
         self.depth_channels = int(
@@ -235,7 +236,10 @@ class BEVDepthLightningModel(LightningModule):
         return self.model(sweep_imgs, mats)
 
     def training_step(self, batch):
-        (sweep_imgs, mats, _, _, gt_boxes, gt_labels, depth_labels) = batch
+        if len(batch) == 7:
+            (sweep_imgs, mats, _, _, gt_boxes, gt_labels, depth_labels) = batch
+        else:
+            (sweep_imgs, mats, _, _, gt_boxes, gt_labels) = batch
         if torch.cuda.is_available():
             for key, value in mats.items():
                 mats[key] = value.cuda()
@@ -250,14 +254,18 @@ class BEVDepthLightningModel(LightningModule):
             targets = self.model.get_targets(gt_boxes, gt_labels)
             detection_loss = self.model.loss(targets, preds)
 
-        if len(depth_labels.shape) == 5:
-            # only key-frame will calculate depth loss
-            depth_labels = depth_labels[:, 0, ...]
-        depth_loss = self.get_depth_loss(depth_labels.cuda(), depth_preds)
-        self.log('detection_loss', detection_loss)
-        self.log('depth_loss', depth_loss)
-        return detection_loss + depth_loss
-
+        if len(batch) == 7:
+            if len(depth_labels.shape) == 5:
+                # only key-frame will calculate depth loss
+                depth_labels = depth_labels[:, 0, ...]
+            depth_loss = self.get_depth_loss(depth_labels.cuda(), depth_preds)
+            self.log('detection_loss', detection_loss)
+            self.log('depth_loss', depth_loss)
+            return detection_loss + depth_loss
+        else:
+            self.log('detection_loss', detection_loss)
+            return detection_loss
+        
     def get_depth_loss(self, depth_labels, depth_preds):
         depth_labels = self.get_downsampled_gt_depth(depth_labels)
         depth_preds = depth_preds.permute(0, 2, 3, 1).contiguous().view(
