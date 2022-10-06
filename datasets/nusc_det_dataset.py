@@ -325,7 +325,7 @@ class NuscDetDataset(Dataset):
         self.use_fusion = use_fusion
         
         self.ratio_range = [0.90, 1.10]
-        self.roll_range = [-3.0, 3.0]
+        self.roll_range = [-0.0, 0.0]
         self.pitch_range = [-1.0, 1.0]
 
     def _get_sample_indices(self):

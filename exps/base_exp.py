@@ -29,7 +29,7 @@ backbone_conf = {
     'y_bound': [-51.2, 51.2, 0.8],
     'z_bound': [-5, 3, 8],
      # 'd_bound': [2.0, 58.0, 0.5],
-    'd_bound': [-3.0, 7.0, 100],
+    'd_bound': [-3.0, 7.0, 180],
     'final_dim':
     final_dim,
     'output_channels':
@@ -59,7 +59,7 @@ ida_aug_conf = {
     'resize_lim': (0.386, 0.55),
     'final_dim':
     final_dim,
-    'rot_lim': (-0.0, 0.0),
+    'rot_lim': (-5.4, 5.4),
     'H':
     H,
     'W':
@@ -246,7 +246,10 @@ class BEVDepthLightningModel(LightningModule):
             sweep_imgs = sweep_imgs.cuda()
             gt_boxes = [gt_box.cuda() for gt_box in gt_boxes]
             gt_labels = [gt_label.cuda() for gt_label in gt_labels]
-        preds, depth_preds = self(sweep_imgs, mats)
+        if len(batch) == 7:
+            preds, depth_preds = self(sweep_imgs, mats)
+        else:
+            preds = self(sweep_imgs, mats)
         if isinstance(self.model, torch.nn.parallel.DistributedDataParallel):
             targets = self.model.module.get_targets(gt_boxes, gt_labels)
             detection_loss = self.model.module.loss(targets, preds)

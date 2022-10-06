@@ -35,7 +35,7 @@ def run_cli(model_class=BEVDepthLightningModel,
     parser = BEVDepthLightningModel.add_model_specific_args(parent_parser)
     parser.set_defaults(profiler='simple',
                         deterministic=False,
-                        max_epochs=24,
+                        max_epochs=32,
                         accelerator='ddp',
                         num_sanity_val_steps=0,
                         gradient_clip_val=5,
@@ -48,6 +48,7 @@ def run_cli(model_class=BEVDepthLightningModel,
         pl.seed_everything(args.seed)
 
     model = model_class(**vars(args))
+
     if use_ema:
         train_dataloader = model.train_dataloader()
         ema_callback = EMACallback(
@@ -55,6 +56,7 @@ def run_cli(model_class=BEVDepthLightningModel,
         checkpoint_callback = ModelCheckpoint(dirpath=os.path.join('./outputs', exp_name, "checkpoints"), filename='{epoch}', every_n_epochs=6, save_top_k=-1)
         trainer = pl.Trainer.from_argparse_args(args, callbacks=[ema_callback, checkpoint_callback])
     else:
+        checkpoint_callback = ModelCheckpoint(dirpath=os.path.join('./outputs', exp_name, "checkpoints"), filename='{epoch}', every_n_epochs=6, save_top_k=-1)
         trainer = pl.Trainer.from_argparse_args(args)
     if args.evaluate:
         for ckpt_name in os.listdir(args.ckpt_path):
