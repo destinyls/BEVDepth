@@ -55,6 +55,7 @@ def run_cli(model_class=BEVDepthLightningModel,
         checkpoint_callback = ModelCheckpoint(dirpath=os.path.join('./outputs', exp_name, "checkpoints"), filename='{epoch}', every_n_epochs=6, save_top_k=-1)
         trainer = pl.Trainer.from_argparse_args(args, callbacks=[ema_callback, checkpoint_callback])
     else:
+        checkpoint_callback = ModelCheckpoint(dirpath=os.path.join('./outputs', exp_name, "checkpoints"), filename='{epoch}', every_n_epochs=6, save_top_k=-1)
         trainer = pl.Trainer.from_argparse_args(args)
     if args.evaluate:
         for ckpt_name in os.listdir(args.ckpt_path):

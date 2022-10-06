@@ -1,2 +1,2 @@
-python exps/mv/bev_depth_lss_r50_256x704_128x128_20e_cbgs_2key_da_ema.py --amp_backend native -b 2 --gpus 6
-python exps/mv/bev_depth_lss_r50_256x704_128x128_20e_cbgs_2key_da_ema.py --ckpt_path outputs/bev_depth_lss_r50_256x704_128x128_20e_cbgs_2key_da_ema/checkpoints -e -b 2 --gpus 6
+python exps/mv/bev_depth_lss_r50_256x704_128x128_24e_2key.py --amp_backend native -b 4 --gpus 8
+python exps/mv/bev_depth_lss_r50_256x704_128x128_24e_2key.py --ckpt_path outputs/bev_depth_lss_r50_256x704_128x128_24e_2key/checkpoints -e -b 4 --gpus 8
