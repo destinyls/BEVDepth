@@ -313,12 +313,13 @@ class LSSFPN(nn.Module):
         ogfH, ogfW = self.final_dim
         fH, fW = ogfH // self.downsample_factor, ogfW // self.downsample_factor
         # SID
-        '''
+        
         d_coords = np.arange(self.d_bound[2]) / self.d_bound[2] * (math.log(self.d_bound[1]) - math.log(self.d_bound[0]))
         d_coords = np.exp(d_coords + math.log(self.d_bound[0]))
         d_coords = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
-        '''     
+           
         # Power ID
+        '''
         alpha = 2
         range_num1 = int(self.d_bound[2] * abs(self.d_bound[0]) / (self.d_bound[1] - self.d_bound[0]))
         range_num2 = self.d_bound[2] - range_num1
@@ -334,7 +335,7 @@ class LSSFPN(nn.Module):
 
         d_coords = np.concatenate([d_coords1, d_coords2], axis=0)
         d_coords = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
-                         
+        '''            
         D, _, _ = d_coords.shape
         x_coords = torch.linspace(0, ogfW - 1, fW, dtype=torch.float).view(
             1, 1, fW).expand(D, fH, fW)
