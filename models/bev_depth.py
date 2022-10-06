@@ -1,5 +1,7 @@
 import cv2
 import torch
+
+import numpy as np
 from torch import nn
 
 from mmdet3d.models import build_neck
@@ -66,11 +68,17 @@ class BEVDepth(nn.Module):
                                           mats_dict,
                                           timestamps,
                                           is_return_depth=True)
-            preds = self.head(x)
+            bs = x.shape[0]
+            ids1 = np.arange(0, bs, 2)
+            preds = self.head(x[ids1])
+            # preds = self.head(x)
             return preds, x, depth_pred
         elif self.training:
             x = self.backbone(x, mats_dict, timestamps)
-            preds = self.head(x)
+            bs = x.shape[0]
+            ids1 = np.arange(0, bs, 2)
+            preds = self.head(x[ids1])
+            # preds = self.head(x)
             return preds, x
         else:
             x = self.backbone(x, mats_dict, timestamps)

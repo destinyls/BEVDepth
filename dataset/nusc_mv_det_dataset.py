@@ -665,6 +665,9 @@ class NuscMVDetDataset(Dataset):
         return cams
 
     def __getitem__(self, idx):
+        if self.cache_flag and self.is_train:
+            idx = self.cache_flag_index
+            
         if self.use_cbgs:
             idx = self.sample_indices[idx]
         cam_infos = list()
@@ -714,7 +717,18 @@ class NuscMVDetDataset(Dataset):
             gt_boxes = sweep_imgs.new_zeros(0, 7)
             gt_labels = sweep_imgs.new_zeros(0, )
         
-        rotate_bda, scale_bda, flip_dx, flip_dy = self.sample_bda_augmentation()
+        if self.cache_flag and self.is_train:
+            rotate_bda, scale_bda, flip_dx, flip_dy = self.cache_bda_augmentation
+            self.cache_flag = False
+        elif self.is_train:
+            self.cache_bda_augmentation = self.sample_bda_augmentation(
+            )
+            rotate_bda, scale_bda, flip_dx, flip_dy = self.cache_bda_augmentation
+            self.cache_flag = True
+            self.cache_flag_index = idx
+        else:
+            rotate_bda, scale_bda, flip_dx, flip_dy = self.sample_bda_augmentation(
+            )
 
         bda_mat = sweep_imgs.new_zeros(4, 4)
         bda_mat[3, 3] = 1

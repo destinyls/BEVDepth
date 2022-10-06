@@ -5,6 +5,7 @@ import os
 import math
 
 import mmcv
+import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
@@ -254,18 +255,25 @@ class BEVDepthLightningModel(LightningModule):
             (sweep_imgs, mats, _, _, gt_boxes, gt_labels, depth_labels) = batch
         else:
             (sweep_imgs, mats, _, _, gt_boxes, gt_labels) = batch
+        
         if torch.cuda.is_available():
             for key, value in mats.items():
                 mats[key] = value.cuda()
             sweep_imgs = sweep_imgs.cuda()
+             
+            '''
             gt_boxes = [gt_box.cuda() for gt_box in gt_boxes]
             gt_labels = [gt_label.cuda() for gt_label in gt_labels]
+            '''
+            ids1 = np.arange(0, len(gt_labels), 2).tolist()        
+            gt_boxes = [gt_boxes[ids].cuda() for ids in ids1]
+            gt_labels = [gt_labels[ids].cuda() for ids in ids1]
 
         if len(batch) == 7:
             preds, feature_map, depth_preds = self(sweep_imgs, mats)
         else:
             preds, feature_map = self(sweep_imgs, mats)
-            
+        
         if isinstance(self.model, torch.nn.parallel.DistributedDataParallel):
             targets = self.model.module.get_targets(gt_boxes, gt_labels)
             detection_loss = self.model.module.loss(targets, preds)
