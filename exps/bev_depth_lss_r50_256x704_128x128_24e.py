@@ -190,9 +190,9 @@ head_conf = {
 
 self_training_conf = dict(type='SelfTraining',
                      in_dim=80,
-                     proj_hidden_dim=512,
-                     pred_hidden_dim=128,
-                     out_dim=512,
+                     proj_hidden_dim=2048,
+                     pred_hidden_dim=512,
+                     out_dim=2048,
                      pc_range=[0, -51.2, -5, 102.4, 51.2, 3],
                      bev_h=128,
                      bev_w=128,
@@ -234,7 +234,7 @@ class BEVDepthLightningModel(LightningModule):
                                             output_dir=self.default_root_dir)
         self.model = BEVDepth(self.backbone_conf,
                               self.head_conf,
-                              self_training_conf=None,
+                              self_training_conf=self_training_conf,
                               is_train_depth=False)
         self.mode = 'valid'
         self.img_conf = img_conf
@@ -268,7 +268,7 @@ class BEVDepthLightningModel(LightningModule):
             ids1 = np.arange(0, len(gt_labels), 2).tolist()        
             gt_boxes = [gt_boxes[ids].cuda() for ids in ids1]
             gt_labels = [gt_labels[ids].cuda() for ids in ids1]
-
+            
         if len(batch) == 7:
             preds, feature_map, depth_preds = self(sweep_imgs, mats)
         else:
