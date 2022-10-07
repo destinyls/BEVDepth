@@ -102,7 +102,7 @@ class SelfTraining(nn.Module):
     def forward(self, feature_map, gt_boxes=None):
         bs = feature_map.shape[0]
         ids1 = np.arange(0, bs, 2)
-        ids2 = np.arange(1, bs + 1, 2)
+        ids2 = np.arange(1, bs + 1, 2)        
         
         # pixel level
         '''
@@ -136,6 +136,7 @@ class SelfTraining(nn.Module):
         loss_map = D(p1, z2) / 2 + D(p2, z1) / 2
         '''
         # bbox level
+        gt_boxes = [gt_boxes[ids] for ids in ids1.tolist()]
         max_objs = 200
         bbox_locs = np.zeros((bs//2, 3 * max_objs, 2), dtype=np.float32)
         bbox_mask = np.zeros((bs//2, max_objs), dtype=np.bool)
@@ -181,6 +182,7 @@ class SelfTraining(nn.Module):
         z1, z2 = self.projector(x1), self.projector(x2)
         p1, p2 = self.predictor(z1), self.predictor(z2)
         loss_bbox = D(p1, z2) / 2 + D(p2, z1) / 2
+        
         return loss_bbox
     
     def bev_voxels(self, num_voxels):

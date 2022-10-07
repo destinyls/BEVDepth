@@ -68,17 +68,11 @@ class BEVDepth(nn.Module):
                                           mats_dict,
                                           timestamps,
                                           is_return_depth=True)
-            bs = x.shape[0]
-            ids1 = np.arange(0, bs, 2)
-            preds = self.head(x[ids1])
-            # preds = self.head(x)
+            preds = self.head(x)
             return preds, x, depth_pred
         elif self.training:
             x = self.backbone(x, mats_dict, timestamps)
-            bs = x.shape[0]
-            ids1 = np.arange(0, bs, 2)
-            preds = self.head(x[ids1])
-            # preds = self.head(x)
+            preds = self.head(x)
             return preds, x
         else:
             x = self.backbone(x, mats_dict, timestamps)

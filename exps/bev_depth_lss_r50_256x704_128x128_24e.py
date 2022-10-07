@@ -260,14 +260,8 @@ class BEVDepthLightningModel(LightningModule):
             for key, value in mats.items():
                 mats[key] = value.cuda()
             sweep_imgs = sweep_imgs.cuda()
-             
-            '''
             gt_boxes = [gt_box.cuda() for gt_box in gt_boxes]
             gt_labels = [gt_label.cuda() for gt_label in gt_labels]
-            '''
-            ids1 = np.arange(0, len(gt_labels), 2).tolist()        
-            gt_boxes = [gt_boxes[ids].cuda() for ids in ids1]
-            gt_labels = [gt_labels[ids].cuda() for ids in ids1]
             
         if len(batch) == 7:
             preds, feature_map, depth_preds = self(sweep_imgs, mats)
@@ -443,7 +437,7 @@ class BEVDepthLightningModel(LightningModule):
             batch_size=self.batch_size_per_device,
             num_workers=4,
             drop_last=True,
-            shuffle=False,
+            shuffle=True,
             collate_fn=partial(collate_fn,
                                is_return_depth=self.data_return_depth),
             sampler=None,
