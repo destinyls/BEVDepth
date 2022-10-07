@@ -189,7 +189,7 @@ head_conf = {
 }
 
 self_training_conf = dict(type='SelfTraining',
-                     in_dim=80,
+                     in_dim=240,
                      proj_hidden_dim=2048,
                      pred_hidden_dim=512,
                      out_dim=2048,

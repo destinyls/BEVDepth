@@ -136,21 +136,29 @@ class SelfTraining(nn.Module):
         loss_map = D(p1, z2) / 2 + D(p2, z1) / 2
         '''
         # bbox level
-        bbox_locs = np.zeros((bs//2, 200, 2), dtype=np.float32)
-        bbox_mask = np.zeros((bs//2, 200), dtype=np.bool)
-        for idx in range(len(gt_boxes)):
-            gt_bbox = gt_boxes[idx].cpu().numpy()
+        max_objs = 200
+        bbox_locs = np.zeros((bs//2, 3 * max_objs, 2), dtype=np.float32)
+        bbox_mask = np.zeros((bs//2, max_objs), dtype=np.bool)
+        for batch_id in range(len(gt_boxes)):
+            gt_bbox = gt_boxes[batch_id].cpu().numpy()
             if gt_bbox.shape[0] == 0:
                 continue
-            locs = gt_bbox[:, :3]
-            bev_locs = self.point2bevpixel(locs)
-            bbox_locs[idx, :bev_locs.shape[0], :] = bev_locs
-            bbox_mask[idx, :bev_locs.shape[0]] = True
-        '''
-        bev_demo = np.zeros((128, 128, 3))
-        bev_demo[bbox_locs[0,:,1].astype(np.int32), bbox_locs[0,:,0].astype(np.int32), :] = 255
-        cv2.imwrite("bev_demo.jpg", bev_demo)
-        '''
+            for obj_id in range(gt_bbox.shape[0]):
+                loc, lwh, rot_y = gt_bbox[obj_id, :3], gt_bbox[obj_id, 3:6], gt_bbox[obj_id, 6]
+                '''
+                corners = self.get_object_corners(lwh, loc, rot_y)
+                pixels = self.point2bevpixel(corners)
+                pixels_w, pixels_h = pixels[:,0], pixels[:,1]
+                c = (0, 255, 255)
+                cv2.line(bev_demo, (pixels_w[0], pixels_h[0]), (pixels_w[1], pixels_h[1]), c, 2)
+                cv2.line(bev_demo, (pixels_w[0], pixels_h[0]), (pixels_w[2], pixels_h[2]), c, 2)
+                cv2.line(bev_demo, (pixels_w[1], pixels_h[1]), (pixels_w[3], pixels_h[3]), c, 2)
+                cv2.line(bev_demo, (pixels_w[2], pixels_h[2]), (pixels_w[3], pixels_h[3]), c, 2)
+                '''
+                corners = self.get_object_axes(lwh, loc, rot_y)
+                pixels = self.point2bevpixel(corners)
+                bbox_locs[batch_id, (3 * obj_id):(3 * (obj_id+1)), :] = pixels
+                bbox_mask[batch_id, obj_id] = True
         bbox_mask = torch.from_numpy(bbox_mask).to(device=feature_map.device)
         bbox_locs = torch.from_numpy(bbox_locs).to(device=feature_map.device)
         bbox_rois = torch.cat([bbox_locs - 2, bbox_locs + 2], dim=-1)
@@ -161,8 +169,9 @@ class SelfTraining(nn.Module):
         feature_map1, feature_map2 = feature_map[ids1], feature_map[ids2]
         features_bbox_rois1 = roi_align(feature_map1, bbox_rois, output_size=[1,1], spatial_scale=1, sampling_ratio=1)
         features_bbox_rois2 = roi_align(feature_map2, bbox_rois, output_size=[1,1], spatial_scale=1, sampling_ratio=1)
-        x1 = features_bbox_rois1.view(bs//2, -1, features_bbox_rois1.shape[1])
-        x2 = features_bbox_rois2.view(bs//2, -1, features_bbox_rois2.shape[1])
+        
+        x1 = features_bbox_rois1.view(bs//2, -1, 3 * features_bbox_rois1.shape[1])
+        x2 = features_bbox_rois2.view(bs//2, -1, 3 * features_bbox_rois2.shape[1])
         mask = bbox_mask.flatten()
         x1 = x1.view(-1, x1.shape[-1])[mask]
         x2 = x2.view(-1, x2.shape[-1])[mask]
@@ -191,3 +200,22 @@ class SelfTraining(nn.Module):
         pixels[:, 0] = np.clip(pixels[:, 0], 0, self.bev_w-1)
         pixels[:, 1] = np.clip(pixels[:, 1], 0, self.bev_h-1)
         return pixels
+    
+    def get_object_corners(self, lwh, loc, rot_y):
+        tr_matrix = np.zeros((2, 3)) 
+        tr_matrix[:2, :2] = np.array([np.cos(rot_y), -np.sin(rot_y), np.sin(rot_y), np.cos(rot_y)]).astype(float).reshape(2,2)
+        tr_matrix[:2, 2] = np.array([loc[0], loc[1]]).astype(float).reshape(1,2)
+        lwh = 0.5 * lwh
+        corner_points = np.array([lwh[1], lwh[0], 1.0, lwh[1], -lwh[0], 1.0, -lwh[1], lwh[0], 1.0, -lwh[1], -lwh[0], 1.0]).astype(float).reshape(4,3).T
+        corner_points = np.dot(tr_matrix, corner_points).T
+        return corner_points
+    
+    def get_object_axes(self, lwh, loc, rot_y):
+        tr_matrix = np.zeros((2, 3)) 
+        tr_matrix[:2, :2] = np.array([np.cos(rot_y), -np.sin(rot_y), np.sin(rot_y), np.cos(rot_y)]).astype(float).reshape(2,2)
+        tr_matrix[:2, 2] = np.array([loc[0], loc[1]]).astype(float).reshape(1,2)
+        lwh = 0.5 * lwh
+        # corner_points = np.array([0.0, lwh[0], 1.0, 0.0, -lwh[0], 1.0, 0.0, -lwh[0], 1.0]).astype(float).reshape(3,3).T
+        corner_points = np.array([lwh[1], 0.0, 1.0, 0.0, 0.0, 1.0, -lwh[1], 0.0, 1.0]).astype(float).reshape(3,3).T
+        corner_points = np.dot(tr_matrix, corner_points).T
+        return corner_points
