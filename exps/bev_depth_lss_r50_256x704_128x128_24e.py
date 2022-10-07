@@ -277,11 +277,11 @@ class BEVDepthLightningModel(LightningModule):
         if isinstance(self.model, torch.nn.parallel.DistributedDataParallel):
             targets = self.model.module.get_targets(gt_boxes, gt_labels)
             detection_loss = self.model.module.loss(targets, preds)
-            simsiam_loss = self.model.module.simsiam(feature_map) if self.model.module.is_ssl else 0
+            simsiam_loss = self.model.module.simsiam(feature_map, gt_boxes) if self.model.module.is_ssl else 0
         else:
             targets = self.model.get_targets(gt_boxes, gt_labels)
             detection_loss = self.model.loss(targets, preds)
-            simsiam_loss = self.model.simsiam(feature_map) if self.model.is_ssl else 0
+            simsiam_loss = self.model.simsiam(feature_map, gt_boxes) if self.model.is_ssl else 0
         
         if len(batch) == 7:
             if len(depth_labels.shape) == 5:
