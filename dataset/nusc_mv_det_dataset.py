@@ -42,7 +42,6 @@ map_name_from_general_to_detection = {
     'static_object.bicycle_rack': 'ignore',
 }
 
-
 def equation_plane(points): 
     x1, y1, z1 = points[0, 0], points[0, 1], points[0, 2]
     x2, y2, z2 = points[1, 0], points[1, 1], points[1, 2]
@@ -255,13 +254,11 @@ class NuscMVDetDataset(Dataset):
             'All `key_idxes` must less than 0.'
         self.key_idxes = [0] + key_idxes
         
-        self.cache_flag = False
-        self.cache_flag_index = -1
-        self.cache_bda_augmentation = None
+        self.ratio_range = [0.95, 1.05]
+        self.roll_range = [-1.0, 1.0]
+        self.pitch_range = [-0.5, 0.5]
         
-        self.ratio_range = [0.90, 1.10]
-        self.roll_range = [-3.0, 3.0]
-        self.pitch_range = [-1.0, 1.0]
+        self.cache_id_list = []
 
     def _get_sample_indices(self):
         """Load annotations from ann_file.
@@ -419,7 +416,7 @@ class NuscMVDetDataset(Dataset):
         denorm = -1 * equation_plane(ground_points_cam)
         return denorm
 
-    def get_image(self, cam_infos, cams, cache_flag):
+    def get_image(self, cam_infos, cams, data_aug):
         """Given data and cam_names, return image data needed.
 
         Args:
@@ -495,8 +492,8 @@ class NuscMVDetDataset(Dataset):
                     cam_info[cam]['calibrated_sensor']['camera_intrinsic'])
                 sweepego2sweepsensor = sweepsensor2sweepego.inverse()
                 
-                if self.is_train and random.random() < 0.25:
-                # if self.is_train and cache_flag:
+                # if self.is_train and random.random() < 0.25:
+                if self.is_train and data_aug:
                     intrin_mat, sweepego2sweepsensor, ratio, roll, transform_pitch = self.sample_intrin_extrin_augmentation(intrin_mat, sweepego2sweepsensor)
                     img = img_intrin_extrin_transform(img, ratio, roll, transform_pitch, intrin_mat.numpy())
                 denorm = get_denorm(sweepego2sweepsensor.numpy())
@@ -665,9 +662,10 @@ class NuscMVDetDataset(Dataset):
             cams = self.ida_aug_conf['cams']
         return cams
 
-    def __getitem__(self, idx):
-        if self.cache_flag and self.is_train:
-            idx = self.cache_flag_index
+    def __getitem__(self, idx):        
+        if idx not in self.cache_id_list:
+            self.cache_id_list.append(idx) 
+        
         if self.use_cbgs:
             idx = self.sample_indices[idx]
         cam_infos = list()
@@ -682,6 +680,7 @@ class NuscMVDetDataset(Dataset):
             elif self.infos[cur_idx]['scene_token'] != self.infos[idx][
                     'scene_token']:
                 cur_idx = idx
+            
             info = self.infos[cur_idx]
             cam_infos.append(info['cam_infos'])
             for sweep_idx in self.sweeps_idx:
@@ -696,62 +695,58 @@ class NuscMVDetDataset(Dataset):
                                 for cam in cams]) == len(cams):
                             cam_infos.append(info['sweeps'][i])
                             break
-        image_data_list = self.get_image(cam_infos, cams, ~self.cache_flag)
-        ret_list = list()
-        (
-            sweep_imgs,
-            sweep_sensor2ego_mats,
-            sweep_intrins,
-            sweep_ida_mats,
-            sweep_sensor2sensor_mats,
-            sweep_sensor2virtual_mats,
-            sweep_timestamps,
-            sweep_reference_heights,
-            img_metas,
-        ) = image_data_list[:9]
-        img_metas['token'] = self.infos[idx]['sample_token']
-        if self.is_train:
-            gt_boxes, gt_labels = self.get_gt(self.infos[idx], cams)
-        # Temporary solution for test.
-        else:
-            gt_boxes = sweep_imgs.new_zeros(0, 7)
-            gt_labels = sweep_imgs.new_zeros(0, )
+        
+        data_aug_list = [False, True] if self.is_train else [False]
+        pair_ret_list = []
+        for data_aug in data_aug_list:
+            image_data_list = self.get_image(cam_infos, cams, data_aug)
+            ret_list = list()
+            (
+                sweep_imgs,
+                sweep_sensor2ego_mats,
+                sweep_intrins,
+                sweep_ida_mats,
+                sweep_sensor2sensor_mats,
+                sweep_sensor2virtual_mats,
+                sweep_timestamps,
+                sweep_reference_heights,
+                img_metas,
+            ) = image_data_list[:9]
+            
+            img_metas['token'] = self.infos[idx]['sample_token']
+            if self.is_train:
+                gt_boxes, gt_labels = self.get_gt(self.infos[idx], cams)
+            # Temporary solution for test.
+            else:
+                gt_boxes = sweep_imgs.new_zeros(0, 7)
+                gt_labels = sweep_imgs.new_zeros(0, )
 
-        if self.cache_flag and self.is_train:
-            rotate_bda, scale_bda, flip_dx, flip_dy = self.cache_bda_augmentation
-            self.cache_flag = False
-        elif self.is_train:
-            self.cache_bda_augmentation = self.sample_bda_augmentation(
-            )
-            rotate_bda, scale_bda, flip_dx, flip_dy = self.cache_bda_augmentation
-            self.cache_flag = True
-            self.cache_flag_index = idx
-        else:
             rotate_bda, scale_bda, flip_dx, flip_dy = self.sample_bda_augmentation(
             )
-       
-        bda_mat = sweep_imgs.new_zeros(4, 4)
-        bda_mat[3, 3] = 1
-        gt_boxes, bda_rot = bev_transform(gt_boxes, rotate_bda, scale_bda,
-                                          flip_dx, flip_dy)
-        bda_mat[:3, :3] = bda_rot
-        ret_list = [
-            sweep_imgs,
-            sweep_sensor2ego_mats,
-            sweep_intrins,
-            sweep_ida_mats,
-            sweep_sensor2sensor_mats,
-            sweep_sensor2virtual_mats,
-            bda_mat,
-            sweep_timestamps,
-            sweep_reference_heights,
-            img_metas,
-            gt_boxes,
-            gt_labels,
-        ]
-        if self.return_depth:
-            ret_list.append(image_data_list[9])
-        return ret_list
+            bda_mat = sweep_imgs.new_zeros(4, 4)
+            bda_mat[3, 3] = 1
+            gt_boxes, bda_rot = bev_transform(gt_boxes, rotate_bda, scale_bda,
+                                            flip_dx, flip_dy)
+            bda_mat[:3, :3] = bda_rot
+            ret_list = [
+                sweep_imgs,
+                sweep_sensor2ego_mats,
+                sweep_intrins,
+                sweep_ida_mats,
+                sweep_sensor2sensor_mats,
+                sweep_sensor2virtual_mats,
+                bda_mat,
+                sweep_timestamps,
+                sweep_reference_heights,
+                img_metas,
+                gt_boxes,
+                gt_labels,
+            ]
+            if self.return_depth:
+                ret_list.append(image_data_list[9])
+            pair_ret_list.append(ret_list)
+            
+        return pair_ret_list
 
     def __str__(self):
         return f"""NuscData: {len(self)} samples. Split: \
@@ -763,7 +758,6 @@ class NuscMVDetDataset(Dataset):
             return len(self.sample_indices)
         else:
             return len(self.infos)
-
 
 def collate_fn(data, is_return_depth=False):
     imgs_batch = list()
@@ -779,36 +773,40 @@ def collate_fn(data, is_return_depth=False):
     gt_labels_batch = list()
     img_metas_batch = list()
     depth_labels_batch = list()
+    
     for iter_data in data:
-        (
-            sweep_imgs,
-            sweep_sensor2ego_mats,
-            sweep_intrins,
-            sweep_ida_mats,
-            sweep_sensor2sensor_mats,
-            sweep_sensor2virtual_mats,
-            bda_mat,
-            sweep_timestamps,
-            sweep_reference_heights,
-            img_metas,
-            gt_boxes,
-            gt_labels,
-        ) = iter_data[:12]
-        if is_return_depth:
-            gt_depth = iter_data[12]
-            depth_labels_batch.append(gt_depth)
-        imgs_batch.append(sweep_imgs)
-        sensor2ego_mats_batch.append(sweep_sensor2ego_mats)
-        intrin_mats_batch.append(sweep_intrins)
-        ida_mats_batch.append(sweep_ida_mats)
-        sensor2sensor_mats_batch.append(sweep_sensor2sensor_mats)
-        sensor2virtual_mats_batch.append(sweep_sensor2virtual_mats)
-        bda_mat_batch.append(bda_mat)
-        timestamps_batch.append(sweep_timestamps)
-        reference_heights_batch.append(sweep_reference_heights)
-        img_metas_batch.append(img_metas)
-        gt_boxes_batch.append(gt_boxes)
-        gt_labels_batch.append(gt_labels)
+        for ind in range(len(iter_data)):
+            (
+                sweep_imgs,
+                sweep_sensor2ego_mats,
+                sweep_intrins,
+                sweep_ida_mats,
+                sweep_sensor2sensor_mats,
+                sweep_sensor2virtual_mats,
+                bda_mat,
+                sweep_timestamps,
+                sweep_reference_heights,
+                img_metas,
+                gt_boxes,
+                gt_labels,
+            ) = iter_data[ind][:12]
+            if is_return_depth:
+                gt_depth = iter_data[ind][12]
+                depth_labels_batch.append(gt_depth)
+            
+            imgs_batch.append(sweep_imgs)
+            sensor2ego_mats_batch.append(sweep_sensor2ego_mats)
+            intrin_mats_batch.append(sweep_intrins)
+            ida_mats_batch.append(sweep_ida_mats)
+            sensor2sensor_mats_batch.append(sweep_sensor2sensor_mats)
+            sensor2virtual_mats_batch.append(sweep_sensor2virtual_mats)
+            bda_mat_batch.append(bda_mat)
+            timestamps_batch.append(sweep_timestamps)
+            reference_heights_batch.append(sweep_reference_heights)
+            img_metas_batch.append(img_metas)
+            gt_boxes_batch.append(gt_boxes)
+            gt_labels_batch.append(gt_labels)
+    
     mats_dict = dict()
     mats_dict['sensor2ego_mats'] = torch.stack(sensor2ego_mats_batch)
     mats_dict['intrin_mats'] = torch.stack(intrin_mats_batch)

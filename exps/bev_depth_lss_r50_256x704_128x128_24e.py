@@ -18,11 +18,9 @@ from pytorch_lightning.callbacks import Callback
 from torch.cuda.amp.autocast_mode import autocast
 from torch.optim.lr_scheduler import MultiStepLR
 
-from mmdet.datasets.samplers import GroupSampler
-from dataset.samplers.group_sampler import DistributedGroupSampler
 
 from dataset.nusc_mv_det_dataset import NuscMVDetDataset, collate_fn
-from dataset.samplers.sampler import build_sampler
+
 from evaluators.det_mv_evaluators import DetMVNuscEvaluator
 from models.bev_depth import BEVDepth
 from utils.torch_dist import all_gather_object, get_rank, synchronize
@@ -213,7 +211,7 @@ class BEVDepthLightningModel(LightningModule):
                  batch_size_per_device=8,
                  class_names=CLASSES,
                  backbone_conf=backbone_conf,
-                 self_training_conf=self_training_conf,
+                 self_training_conf=None,
                  head_conf=head_conf,
                  ida_aug_conf=ida_aug_conf,
                  bda_aug_conf=bda_aug_conf,
@@ -237,7 +235,7 @@ class BEVDepthLightningModel(LightningModule):
                                             output_dir=self.default_root_dir)
         self.model = BEVDepth(self.backbone_conf,
                               self.head_conf,
-                              self_training_conf=None,
+                              self_training_conf=self_training_conf,
                               is_train_depth=False)
         self.mode = 'valid'
         self.img_conf = img_conf
@@ -433,18 +431,16 @@ class BEVDepthLightningModel(LightningModule):
             return_depth=self.data_return_depth,
         )
         from functools import partial
-        
-        sampler = GroupSampler(train_dataset, self.batch_size_per_device)
+
         train_loader = torch.utils.data.DataLoader(
             train_dataset,
             batch_size=self.batch_size_per_device,
             num_workers=4,
             drop_last=True, 
-            # shuffle=sampler is None,
             shuffle=False,
             collate_fn=partial(collate_fn,
                                is_return_depth=self.data_return_depth),
-            sampler=sampler,
+            sampler=None,
         )
         return train_loader
 
