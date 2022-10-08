@@ -18,7 +18,11 @@ from pytorch_lightning.callbacks import Callback
 from torch.cuda.amp.autocast_mode import autocast
 from torch.optim.lr_scheduler import MultiStepLR
 
+from mmdet.datasets.samplers import GroupSampler
+from dataset.samplers.group_sampler import DistributedGroupSampler
+
 from dataset.nusc_mv_det_dataset import NuscMVDetDataset, collate_fn
+from dataset.samplers.sampler import build_sampler
 from evaluators.det_mv_evaluators import DetMVNuscEvaluator
 from models.bev_depth import BEVDepth
 from utils.torch_dist import all_gather_object, get_rank, synchronize
@@ -429,16 +433,18 @@ class BEVDepthLightningModel(LightningModule):
             return_depth=self.data_return_depth,
         )
         from functools import partial
-
+        
+        sampler = GroupSampler(train_dataset, self.batch_size_per_device)
         train_loader = torch.utils.data.DataLoader(
             train_dataset,
             batch_size=self.batch_size_per_device,
             num_workers=4,
-            drop_last=True,
+            drop_last=True, 
+            # shuffle=sampler is None,
             shuffle=False,
             collate_fn=partial(collate_fn,
                                is_return_depth=self.data_return_depth),
-            sampler=None,
+            sampler=sampler,
         )
         return train_loader
 
@@ -509,7 +515,7 @@ def run_cli():
     parser.set_defaults(
         profiler='simple',
         deterministic=False,
-        max_epochs=150,
+        max_epochs=80,
         accelerator='ddp',
         num_sanity_val_steps=0,
         gradient_clip_val=5,

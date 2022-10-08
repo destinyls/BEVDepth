@@ -495,8 +495,8 @@ class NuscMVDetDataset(Dataset):
                     cam_info[cam]['calibrated_sensor']['camera_intrinsic'])
                 sweepego2sweepsensor = sweepsensor2sweepego.inverse()
                 
-                # if self.is_train and random.random() < 0.5:
-                if self.is_train and cache_flag:
+                if self.is_train and random.random() < 0.25:
+                # if self.is_train and cache_flag:
                     intrin_mat, sweepego2sweepsensor, ratio, roll, transform_pitch = self.sample_intrin_extrin_augmentation(intrin_mat, sweepego2sweepsensor)
                     img = img_intrin_extrin_transform(img, ratio, roll, transform_pitch, intrin_mat.numpy())
                 denorm = get_denorm(sweepego2sweepsensor.numpy())
@@ -668,7 +668,6 @@ class NuscMVDetDataset(Dataset):
     def __getitem__(self, idx):
         if self.cache_flag and self.is_train:
             idx = self.cache_flag_index
-
         if self.use_cbgs:
             idx = self.sample_indices[idx]
         cam_infos = list()
@@ -725,7 +724,7 @@ class NuscMVDetDataset(Dataset):
             self.cache_bda_augmentation = self.sample_bda_augmentation(
             )
             rotate_bda, scale_bda, flip_dx, flip_dy = self.cache_bda_augmentation
-            # self.cache_flag = True
+            self.cache_flag = True
             self.cache_flag_index = idx
         else:
             rotate_bda, scale_bda, flip_dx, flip_dy = self.sample_bda_augmentation(
