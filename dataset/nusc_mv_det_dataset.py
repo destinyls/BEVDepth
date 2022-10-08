@@ -230,6 +230,7 @@ class NuscMVDetDataset(Dataset):
         """
         super().__init__()
         self.infos = mmcv.load(info_path)
+        self.infos = random.sample(self.infos, int(0.1 * len(self.infos)))
         
         self.is_train = is_train
         self.ida_aug_conf = ida_aug_conf
@@ -258,8 +259,6 @@ class NuscMVDetDataset(Dataset):
         self.roll_range = [-1.0, 1.0]
         self.pitch_range = [-0.5, 0.5]
         
-        self.cache_id_list = []
-
     def _get_sample_indices(self):
         """Load annotations from ann_file.
 
@@ -492,8 +491,8 @@ class NuscMVDetDataset(Dataset):
                     cam_info[cam]['calibrated_sensor']['camera_intrinsic'])
                 sweepego2sweepsensor = sweepsensor2sweepego.inverse()
                 
-                # if self.is_train and random.random() < 0.25:
-                if self.is_train and data_aug:
+                if self.is_train and random.random() < 0.5:
+                # if self.is_train and data_aug:
                     intrin_mat, sweepego2sweepsensor, ratio, roll, transform_pitch = self.sample_intrin_extrin_augmentation(intrin_mat, sweepego2sweepsensor)
                     img = img_intrin_extrin_transform(img, ratio, roll, transform_pitch, intrin_mat.numpy())
                 denorm = get_denorm(sweepego2sweepsensor.numpy())
@@ -662,10 +661,7 @@ class NuscMVDetDataset(Dataset):
             cams = self.ida_aug_conf['cams']
         return cams
 
-    def __getitem__(self, idx):        
-        if idx not in self.cache_id_list:
-            self.cache_id_list.append(idx) 
-        
+    def __getitem__(self, idx):         
         if self.use_cbgs:
             idx = self.sample_indices[idx]
         cam_infos = list()
@@ -696,7 +692,7 @@ class NuscMVDetDataset(Dataset):
                             cam_infos.append(info['sweeps'][i])
                             break
         
-        data_aug_list = [False, True] if self.is_train else [False]
+        data_aug_list = [False, False] if self.is_train else [False]
         pair_ret_list = []
         for data_aug in data_aug_list:
             image_data_list = self.get_image(cam_infos, cams, data_aug)
