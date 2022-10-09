@@ -253,9 +253,10 @@ class BEVDepthLightningModel(LightningModule):
 
     def training_step(self, batch):
         if len(batch) == 7:
-            (sweep_imgs, mats, _, _, gt_boxes, gt_labels, depth_labels) = batch
+            (sweep_imgs, mats, _, img_metas, gt_boxes, gt_labels, depth_labels) = batch
         else:
-            (sweep_imgs, mats, _, _, gt_boxes, gt_labels) = batch
+            (sweep_imgs, mats, _, img_metas, gt_boxes, gt_labels) = batch
+        
         if torch.cuda.is_available():
             for key, value in mats.items():
                 mats[key] = value.cuda()
@@ -271,10 +272,14 @@ class BEVDepthLightningModel(LightningModule):
         if isinstance(self.model, torch.nn.parallel.DistributedDataParallel):
             targets = self.model.module.get_targets(gt_boxes, gt_labels)
             detection_loss = self.model.module.loss(targets, preds)
+            if img_metas[0]["token"] != img_metas[1]["token"]:
+                print("warning: iamge pair failed")
             simsiam_loss = self.model.module.simsiam(feature_map, gt_boxes) if self.model.module.is_ssl else 0
         else:
             targets = self.model.get_targets(gt_boxes, gt_labels)
             detection_loss = self.model.loss(targets, preds)
+            if img_metas[0]["token"] != img_metas[1]["token"]:
+                print("warning: iamge pair failed")
             simsiam_loss = self.model.simsiam(feature_map, gt_boxes) if self.model.is_ssl else 0
         
         if len(batch) == 7:
