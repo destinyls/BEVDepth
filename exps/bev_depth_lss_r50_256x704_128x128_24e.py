@@ -190,7 +190,7 @@ head_conf = {
 }
 
 self_training_conf = dict(type='SelfTraining',
-                     in_dim=240,
+                     in_dim=80,
                      proj_hidden_dim=2048,
                      pred_hidden_dim=512,
                      out_dim=2048,
@@ -235,7 +235,7 @@ class BEVDepthLightningModel(LightningModule):
                                             output_dir=self.default_root_dir)
         self.model = BEVDepth(self.backbone_conf,
                               self.head_conf,
-                              self_training_conf=None,
+                              self_training_conf=self_training_conf,
                               is_train_depth=False)
         self.mode = 'valid'
         self.img_conf = img_conf
@@ -437,8 +437,6 @@ class BEVDepthLightningModel(LightningModule):
         )
         from functools import partial
 
-        shuffle = True
-        sampler = GroupSampler(train_dataset, self.batch_size_per_device) if shuffle else None
         train_loader = torch.utils.data.DataLoader(
             train_dataset,
             batch_size=self.batch_size_per_device,
@@ -447,7 +445,7 @@ class BEVDepthLightningModel(LightningModule):
             shuffle=False,
             collate_fn=partial(collate_fn,
                                is_return_depth=self.data_return_depth),
-            sampler=sampler,
+            sampler=None,
         )
         return train_loader
 
@@ -498,7 +496,7 @@ def main(args: Namespace) -> None:
             model_pth = os.path.join(args.ckpt_path, ckpt_name)
             trainer.test(model, ckpt_path=model_pth)
     else:
-        trainer = pl.Trainer.from_argparse_args(args, replace_sampler_ddp=False, callbacks=[checkpoint_callback])
+        trainer = pl.Trainer.from_argparse_args(args, callbacks=[checkpoint_callback])
         trainer.fit(model)
         
 def run_cli():

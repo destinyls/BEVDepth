@@ -383,6 +383,14 @@ class LSSFPN(nn.Module):
                               4).matmul(points)
         return points
     
+    def get_proj(self, R, K, R_r, K_r):
+        R_inv = torch.inverse(R)
+        K_inv = torch.inverse(K)
+        proj = torch.matmul(K_r, R_r)
+        proj = torch.matmul(proj, R_inv)
+        proj = torch.matmul([proj], K_inv)
+        return torch.inverse(proj)
+    
     def get_geometry(self, sensor2ego_mat, sensor2virtual_mat, intrin_mat, ida_mat, reference_heights, bda_mat):
         """Transfer points from camera coord to ego coord.
 

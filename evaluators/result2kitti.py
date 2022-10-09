@@ -233,7 +233,6 @@ def result2kitti(results_file, results_path, dair_root, demo=True):
             cam_x, cam_y, cam_z = convert_point(np.array([x, y, z, 1]).T, Tr_velo_to_cam)
             box = get_lidar_3d_8points([w, l, h], yaw_lidar, [x, y, z + h/2])
             box2d = bbbox2bbox(box, Tr_velo_to_cam, camera_intrinsic)
-            category_map[class_name]
             if detection_score > 0.45 and class_name in category_map.keys():
                 i1 = category_map[class_name]
                 i2 = str(0)

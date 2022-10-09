@@ -74,6 +74,12 @@ class SelfTraining(nn.Module):
                       bias=True)
         )
         '''
+        self.channel_proj = nn.Sequential(
+                nn.Linear(3 * in_dim, in_dim),
+                nn.BatchNorm1d(in_dim),
+                nn.ReLU(inplace=True),
+        )
+
         self.projector = nn.Sequential(
                 nn.Linear(in_dim, proj_hidden_dim),
                 nn.BatchNorm1d(proj_hidden_dim),
@@ -115,9 +121,7 @@ class SelfTraining(nn.Module):
         p1, p2 = p1.view(-1, p1.shape[-1]), p2.view(-1, p2.shape[-1])
         loss_map = D(p1, z2) / 2 + D(p2, z1) / 2
         '''
-        
         # grid level
-        '''
         pixel_points = self.bev_voxels(num_voxels=[50, 50])
         pixel_points = torch.from_numpy(pixel_points).to(device=feature_map.device)
         pixel_points = pixel_points.view(1, -1, 2).repeat(bs, 1, 1)
@@ -134,7 +138,7 @@ class SelfTraining(nn.Module):
         z1, z2 = self.projector(x1), self.projector(x2)
         p1, p2 = self.predictor(z1), self.predictor(z2)
         loss_map = D(p1, z2) / 2 + D(p2, z1) / 2
-        '''
+
         # bbox level
         gt_boxes = [gt_boxes[ids] for ids in ids1.tolist()]
         max_objs = 200
@@ -146,16 +150,6 @@ class SelfTraining(nn.Module):
                 continue
             for obj_id in range(gt_bbox.shape[0]):
                 loc, lwh, rot_y = gt_bbox[obj_id, :3], gt_bbox[obj_id, 3:6], gt_bbox[obj_id, 6]
-                '''
-                corners = self.get_object_corners(lwh, loc, rot_y)
-                pixels = self.point2bevpixel(corners)
-                pixels_w, pixels_h = pixels[:,0], pixels[:,1]
-                c = (0, 255, 255)
-                cv2.line(bev_demo, (pixels_w[0], pixels_h[0]), (pixels_w[1], pixels_h[1]), c, 2)
-                cv2.line(bev_demo, (pixels_w[0], pixels_h[0]), (pixels_w[2], pixels_h[2]), c, 2)
-                cv2.line(bev_demo, (pixels_w[1], pixels_h[1]), (pixels_w[3], pixels_h[3]), c, 2)
-                cv2.line(bev_demo, (pixels_w[2], pixels_h[2]), (pixels_w[3], pixels_h[3]), c, 2)
-                '''
                 corners = self.get_object_axes(lwh, loc, rot_y)
                 pixels = self.point2bevpixel(corners)
                 bbox_locs[batch_id, (3 * obj_id):(3 * (obj_id+1)), :] = pixels
@@ -179,11 +173,13 @@ class SelfTraining(nn.Module):
         if x1.shape[0] == 1:
             x1 = x1.repeat(2, 1)
             x2 = x2.repeat(2, 1)
+            
+        x1, x2 = self.channel_proj(x1), self.channel_proj(x2)
         z1, z2 = self.projector(x1), self.projector(x2)
         p1, p2 = self.predictor(z1), self.predictor(z2)
         loss_bbox = D(p1, z2) / 2 + D(p2, z1) / 2
         
-        return loss_bbox
+        return loss_bbox + loss_map
     
     def bev_voxels(self, num_voxels):
         u, v = np.ogrid[0:num_voxels[0], 0:num_voxels[1]]
