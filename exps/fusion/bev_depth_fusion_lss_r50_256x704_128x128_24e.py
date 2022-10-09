@@ -8,6 +8,7 @@ from exps.base_cli import run_cli
 from exps.base_exp import BEVDepthLightningModel as BaseBEVDepthLightningModel
 from models.fusion_bev_depth import FusionBEVDepth
 
+
 class BEVDepthLightningModel(BaseBEVDepthLightningModel):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)

@@ -280,6 +280,10 @@ class NuscDetDataset(Dataset):
             'All `key_idxes` must less than 0.'
         self.key_idxes = [0] + key_idxes
         self.use_fusion = use_fusion
+        
+        self.cache_flag = False
+        self.cache_flag_index = -1
+        self.cache_bda_augmentation = None
 
     def _get_sample_indices(self):
         """Load annotations from ann_file.
@@ -595,6 +599,9 @@ class NuscDetDataset(Dataset):
         return cams
 
     def __getitem__(self, idx):
+        if self.cache_flag and self.is_train:
+            idx = self.cache_flag_index
+            
         if self.use_cbgs:
             idx = self.sample_indices[idx]
         cam_infos = list()
@@ -660,9 +667,20 @@ class NuscDetDataset(Dataset):
         else:
             gt_boxes = sweep_imgs.new_zeros(0, 7)
             gt_labels = sweep_imgs.new_zeros(0, )
-
-        rotate_bda, scale_bda, flip_dx, flip_dy = self.sample_bda_augmentation(
-        )
+        
+        if self.cache_flag and self.is_train:
+            rotate_bda, scale_bda, flip_dx, flip_dy = self.cache_bda_augmentation
+            self.cache_flag = False
+        elif self.is_train:
+            self.cache_bda_augmentation = self.sample_bda_augmentation(
+            )
+            rotate_bda, scale_bda, flip_dx, flip_dy = self.cache_bda_augmentation
+            self.cache_flag = False
+            self.cache_flag_index = idx
+        else:
+            rotate_bda, scale_bda, flip_dx, flip_dy = self.sample_bda_augmentation(
+            )
+            
         bda_mat = sweep_imgs.new_zeros(4, 4)
         bda_mat[3, 3] = 1
         gt_boxes, bda_rot = bev_transform(gt_boxes, rotate_bda, scale_bda,
