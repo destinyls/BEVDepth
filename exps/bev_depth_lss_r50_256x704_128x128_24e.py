@@ -234,7 +234,7 @@ class BEVDepthLightningModel(LightningModule):
                                             output_dir=self.default_root_dir)
         self.model = BEVDepth(self.backbone_conf,
                               self.head_conf,
-                              self_training_conf=self_training_conf,
+                              self_training_conf=None,
                               is_train_depth=False)
         self.mode = 'valid'
         self.img_conf = img_conf
@@ -437,7 +437,7 @@ class BEVDepthLightningModel(LightningModule):
             batch_size=self.batch_size_per_device,
             num_workers=4,
             drop_last=True,
-            shuffle=True,
+            shuffle=False,
             collate_fn=partial(collate_fn,
                                is_return_depth=self.data_return_depth),
             sampler=None,

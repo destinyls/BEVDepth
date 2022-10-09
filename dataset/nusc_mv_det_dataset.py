@@ -231,6 +231,7 @@ class NuscMVDetDataset(Dataset):
         """
         super().__init__()
         self.infos = mmcv.load(info_path)
+        self.infos = random.sample(self.infos, int(0.1 * len(self.infos)))
         
         self.is_train = is_train
         self.ida_aug_conf = ida_aug_conf
@@ -724,7 +725,7 @@ class NuscMVDetDataset(Dataset):
             self.cache_bda_augmentation = self.sample_bda_augmentation(
             )
             rotate_bda, scale_bda, flip_dx, flip_dy = self.cache_bda_augmentation
-            self.cache_flag = True
+            self.cache_flag = False
             self.cache_flag_index = idx
         else:
             rotate_bda, scale_bda, flip_dx, flip_dy = self.sample_bda_augmentation(
