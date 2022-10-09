@@ -261,8 +261,29 @@ class NuscMVDetDataset(Dataset):
         self.cache_bda_augmentation = None
         
         self.ratio_range = [0.95, 1.05]
-        self.roll_range = [-2.0, 2.0]
-        self.pitch_range = [-1.0, 1.0]
+        self.roll_range = [-1.0, 1.0]
+        self.pitch_range = [-0.5, 0.5]
+        
+        if self.is_train:
+            self._set_group_flag()
+            
+    def _set_group_flag(self):
+        """Set flag according to image aspect ratio.
+
+        Images with aspect ratio greater than 1 will be set as group 1,
+        otherwise group 0. In 3D datasets, they are all the same, thus are all
+        zeros.
+        """
+        self.flag = np.zeros(len(self), dtype=np.uint8)
+        
+    def _rand_another(self, idx):
+        """Randomly get another item with the same flag.
+
+        Returns:
+            int: Another index of item with the same flag.
+        """
+        pool = np.where(self.flag == self.flag[idx])[0]
+        return np.random.choice(pool)
 
     def _get_sample_indices(self):
         """Load annotations from ann_file.
@@ -669,7 +690,7 @@ class NuscMVDetDataset(Dataset):
     def __getitem__(self, idx):
         if self.cache_flag and self.is_train:
             idx = self.cache_flag_index
-            
+             
         if self.use_cbgs:
             idx = self.sample_indices[idx]
         cam_infos = list()

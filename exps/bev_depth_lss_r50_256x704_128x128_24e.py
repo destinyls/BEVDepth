@@ -19,6 +19,7 @@ from pytorch_lightning.callbacks import Callback
 from torch.cuda.amp.autocast_mode import autocast
 from torch.optim.lr_scheduler import MultiStepLR
 
+from mmdet.datasets.samplers.group_sampler import GroupSampler
 from dataset.nusc_mv_det_dataset import NuscMVDetDataset, collate_fn
 from evaluators.det_mv_evaluators import DetMVNuscEvaluator
 from models.bev_depth import BEVDepth
@@ -436,15 +437,17 @@ class BEVDepthLightningModel(LightningModule):
         )
         from functools import partial
 
+        shuffle = True
+        sampler = GroupSampler(train_dataset, self.batch_size_per_device) if shuffle else None
         train_loader = torch.utils.data.DataLoader(
             train_dataset,
             batch_size=self.batch_size_per_device,
-            num_workers=4,
+            num_workers=0,
             drop_last=True,
             shuffle=False,
             collate_fn=partial(collate_fn,
                                is_return_depth=self.data_return_depth),
-            sampler=None,
+            sampler=sampler,
         )
         return train_loader
 
@@ -489,12 +492,13 @@ def main(args: Namespace) -> None:
     
     model = BEVDepthLightningModel(**vars(args))
     checkpoint_callback = ModelCheckpoint(dirpath='./outputs/bev_depth_lss_r50_256x704_128x128_24e/checkpoints', filename='{epoch}', every_n_epochs=10, save_last=True, save_top_k=-1)
-    trainer = pl.Trainer.from_argparse_args(args, callbacks=[checkpoint_callback])
     if args.evaluate:
+        trainer = pl.Trainer.from_argparse_args(args)
         for ckpt_name in os.listdir(args.ckpt_path):
             model_pth = os.path.join(args.ckpt_path, ckpt_name)
             trainer.test(model, ckpt_path=model_pth)
     else:
+        trainer = pl.Trainer.from_argparse_args(args, replace_sampler_ddp=False, callbacks=[checkpoint_callback])
         trainer.fit(model)
         
 def run_cli():
@@ -515,7 +519,7 @@ def run_cli():
     parser.set_defaults(
         profiler='simple',
         deterministic=False,
-        max_epochs=150,
+        max_epochs=200,
         accelerator='ddp',
         num_sanity_val_steps=0,
         gradient_clip_val=5,
