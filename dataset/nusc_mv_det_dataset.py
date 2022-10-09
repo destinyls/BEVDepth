@@ -582,6 +582,7 @@ class NuscMVDetDataset(Dataset):
             [key_info[cam]['ego_pose']['rotation'] for cam in cams], 0)
         ego2global_translation = np.mean(
             [key_info[cam]['ego_pose']['translation'] for cam in cams], 0)
+        
         img_metas = dict(
             box_type_3d=LiDARInstance3DBoxes,
             ego2global_translation=ego2global_translation,
@@ -711,6 +712,7 @@ class NuscMVDetDataset(Dataset):
             img_metas,
         ) = image_data_list[:9]
         img_metas['token'] = self.infos[idx]['sample_token']
+        
         if self.is_train:
             gt_boxes, gt_labels = self.get_gt(self.infos[idx], cams)
         # Temporary solution for test.
@@ -725,7 +727,7 @@ class NuscMVDetDataset(Dataset):
             self.cache_bda_augmentation = self.sample_bda_augmentation(
             )
             rotate_bda, scale_bda, flip_dx, flip_dy = self.cache_bda_augmentation
-            self.cache_flag = False
+            self.cache_flag = True
             self.cache_flag_index = idx
         else:
             rotate_bda, scale_bda, flip_dx, flip_dy = self.sample_bda_augmentation(
