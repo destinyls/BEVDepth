@@ -41,7 +41,7 @@ class BEVDepthLightningModel(BaseBEVDepthLightningModel):
         ]
         self.model = BaseBEVDepth(self.backbone_conf,
                                   self.head_conf,
-                                  is_train_depth=True)
+                                  is_train_depth=False)
 
 
 if __name__ == '__main__':

@@ -52,10 +52,10 @@ def run_cli(model_class=BEVDepthLightningModel,
         train_dataloader = model.train_dataloader()
         ema_callback = EMACallback(
             len(train_dataloader.dataset) * args.max_epochs)
-        checkpoint_callback = ModelCheckpoint(dirpath=os.path.join('./outputs', exp_name, "checkpoints"), filename='{epoch}', every_n_epochs=6, save_top_k=-1)
+        checkpoint_callback = ModelCheckpoint(dirpath=os.path.join('./outputs', exp_name, "checkpoints"), filename='{epoch}', every_n_epochs=4, save_top_k=-1)
         trainer = pl.Trainer.from_argparse_args(args, callbacks=[ema_callback, checkpoint_callback])
     else:
-        checkpoint_callback = ModelCheckpoint(dirpath=os.path.join('./outputs', exp_name, "checkpoints"), filename='{epoch}', every_n_epochs=6, save_top_k=-1)
+        checkpoint_callback = ModelCheckpoint(dirpath=os.path.join('./outputs', exp_name, "checkpoints"), filename='{epoch}', every_n_epochs=4, save_top_k=-1)
         trainer = pl.Trainer.from_argparse_args(args, callbacks=[checkpoint_callback])
 
     if args.evaluate:

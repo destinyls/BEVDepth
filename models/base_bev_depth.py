@@ -1,5 +1,7 @@
 from torch import nn
 
+from mmdet3d.models import build_neck
+
 from layers.backbones.base_lss_fpn import BaseLSSFPN
 from layers.heads.bev_depth_head import BEVDepthHead
 
@@ -17,11 +19,15 @@ class BaseBEVDepth(nn.Module):
     """
 
     # TODO: Reduce grid_conf and data_aug_conf
-    def __init__(self, backbone_conf, head_conf, is_train_depth=False):
+    def __init__(self, backbone_conf, head_conf, self_training_conf=None, is_train_depth=False):
         super(BaseBEVDepth, self).__init__()
         self.backbone = BaseLSSFPN(**backbone_conf)
         self.head = BEVDepthHead(**head_conf)
         self.is_train_depth = is_train_depth
+        self.is_ssl = False
+        if self_training_conf is not None:
+            self.simsiam = build_neck(self_training_conf)
+            self.is_ssl = True
 
     def forward(
         self,
@@ -52,13 +58,19 @@ class BaseBEVDepth(nn.Module):
         Returns:
             tuple(list[dict]): Output results for tasks.
         """
+        
         if self.is_train_depth and self.training:
+            print("1111111111111111")
             x, depth_pred = self.backbone(x,
                                           mats_dict,
                                           timestamps,
                                           is_return_depth=True)
             preds = self.head(x)
-            return preds, depth_pred
+            return preds, x, depth_pred
+        elif self.training:
+            x = self.backbone(x, mats_dict, timestamps)
+            preds = self.head(x)
+            return preds, x
         else:
             x = self.backbone(x, mats_dict, timestamps)
             preds = self.head(x)

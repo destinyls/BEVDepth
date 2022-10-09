@@ -28,7 +28,8 @@ backbone_conf = {
     'x_bound': [-51.2, 51.2, 0.8],
     'y_bound': [-51.2, 51.2, 0.8],
     'z_bound': [-5, 3, 8],
-    'd_bound': [2.0, 58.0, 0.5],
+    # 'd_bound': [2.0, 58.0, 0.5],
+    'd_bound': [-7.0, 7.0, 210],
     'final_dim':
     final_dim,
     'output_channels':
@@ -58,7 +59,7 @@ ida_aug_conf = {
     'resize_lim': (0.386, 0.55),
     'final_dim':
     final_dim,
-    'rot_lim': (-5.4, 5.4),
+    'rot_lim': (0.0, 0.0),
     'H':
     H,
     'W':
@@ -178,6 +179,15 @@ head_conf = {
     'min_radius': 2,
 }
 
+self_training_conf = dict(type='SelfTraining',
+                     in_dim=240,
+                     proj_hidden_dim=2048,
+                     pred_hidden_dim=512,
+                     out_dim=2048,
+                     pc_range=[0, -51.2, -5, 102.4, 51.2, 3],
+                     bev_h=128,
+                     bev_w=128,
+                )
 
 class BEVDepthLightningModel(LightningModule):
     MODEL_NAMES = sorted(name for name in models.__dict__
@@ -208,20 +218,24 @@ class BEVDepthLightningModel(LightningModule):
         self.head_conf = head_conf
         self.ida_aug_conf = ida_aug_conf
         self.bda_aug_conf = bda_aug_conf
+        self.is_train_depth = False
         mmcv.mkdir_or_exist(default_root_dir)
         self.default_root_dir = default_root_dir
         self.evaluator = DetNuscEvaluator(class_names=self.class_names,
                                           output_dir=self.default_root_dir)
+        
         self.model = BaseBEVDepth(self.backbone_conf,
                                   self.head_conf,
-                                  is_train_depth=True)
+                                  self_training_conf=None,
+                                  is_train_depth=False)
+        self.data_return_depth = self.model.is_train_depth
+        
         self.mode = 'valid'
         self.img_conf = img_conf
         self.data_use_cbgs = False
         self.num_sweeps = 1
         self.sweep_idxes = list()
         self.key_idxes = list()
-        self.data_return_depth = True
         self.downsample_factor = self.backbone_conf['downsample_factor']
         self.dbound = self.backbone_conf['d_bound']
         self.depth_channels = int(
@@ -235,28 +249,48 @@ class BEVDepthLightningModel(LightningModule):
         return self.model(sweep_imgs, mats)
 
     def training_step(self, batch):
-        (sweep_imgs, mats, _, _, gt_boxes, gt_labels, depth_labels) = batch
+        if len(batch) == 7:
+            (sweep_imgs, mats, _, img_metas, gt_boxes, gt_labels, depth_labels) = batch
+        else:
+            (sweep_imgs, mats, _, img_metas, gt_boxes, gt_labels) = batch
+        
         if torch.cuda.is_available():
             for key, value in mats.items():
                 mats[key] = value.cuda()
             sweep_imgs = sweep_imgs.cuda()
             gt_boxes = [gt_box.cuda() for gt_box in gt_boxes]
             gt_labels = [gt_label.cuda() for gt_label in gt_labels]
-        preds, depth_preds = self(sweep_imgs, mats)
+            
+        if self.is_train_depth:
+            preds, feature_map, depth_preds = self(sweep_imgs, mats)
+        else:
+            preds, feature_map = self(sweep_imgs, mats)
+            
         if isinstance(self.model, torch.nn.parallel.DistributedDataParallel):
+            if img_metas[0]["token"] != img_metas[1]["token"]:
+                print("warning: iamge pair failed")
+            simsiam_loss = self.model.module.simsiam(feature_map, gt_boxes) if self.model.module.is_ssl else 0
             targets = self.model.module.get_targets(gt_boxes, gt_labels)
             detection_loss = self.model.module.loss(targets, preds)
+            simsiam_loss = self.model.module.simsiam(feature_map, gt_boxes) if self.model.module.is_ssl else 0
         else:
+            if img_metas[0]["token"] != img_metas[1]["token"]:
+                print("warning: iamge pair failed")
+            simsiam_loss = self.model.simsiam(feature_map, gt_boxes) if self.model.is_ssl else 0
             targets = self.model.get_targets(gt_boxes, gt_labels)
             detection_loss = self.model.loss(targets, preds)
-
-        if len(depth_labels.shape) == 5:
-            # only key-frame will calculate depth loss
-            depth_labels = depth_labels[:, 0, ...]
-        depth_loss = self.get_depth_loss(depth_labels.cuda(), depth_preds)
-        self.log('detection_loss', detection_loss)
-        self.log('depth_loss', depth_loss)
-        return detection_loss + depth_loss
+            
+        if self.is_train_depth:
+            if len(depth_labels.shape) == 5:
+                # only key-frame will calculate depth loss
+                depth_labels = depth_labels[:, 0, ...]
+            depth_loss = self.get_depth_loss(depth_labels.cuda(), depth_preds)
+            self.log('detection_loss', detection_loss)
+            self.log('depth_loss', depth_loss)
+            return detection_loss + simsiam_loss + depth_loss
+        else:
+            self.log('detection_loss', detection_loss)
+            return detection_loss + simsiam_loss
 
     def get_depth_loss(self, depth_labels, depth_preds):
         depth_labels = self.get_downsampled_gt_depth(depth_labels)

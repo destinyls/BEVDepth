@@ -274,6 +274,7 @@ class BEVDepthHead(CenterHead):
             cls_avg_factor = torch.clamp(reduce_mean(
                 heatmaps[task_id].new_tensor(num_pos)),
                                          min=1).item()
+            
             loss_heatmap = self.loss_cls(preds_dict[0]['heatmap'],
                                          heatmaps[task_id],
                                          avg_factor=cls_avg_factor)
