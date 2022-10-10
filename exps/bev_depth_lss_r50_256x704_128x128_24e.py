@@ -43,7 +43,7 @@ backbone_conf = {
     'y_bound': [-51.2, 51.2, 0.8],
     'z_bound': [-5, 3, 8],
      # 'd_bound': [2.5, 10.5, 0.1],
-     'd_bound': [2.5, 10.5, 80],
+     'd_bound': [2.5, 10.5, 100],
     'final_dim':
     final_dim,
     'output_channels':
@@ -72,14 +72,14 @@ backbone_conf = {
 ida_aug_conf = {
     'resize_lim': (0.386, 0.55),
     'final_dim':
-    final_dim,
-    'rot_lim': (-4.0, 4.0),
+     final_dim,
+    'rot_lim': (-0.0, 0.0),
     'H':
-    H,
+     H,
     'W':
-    W,
+     W,
     'rand_flip':
-    True,
+     True,
     'bot_pct_lim': (0.0, 0.0),
     'cams': ['CAM_FRONT'],
     'Ncams': 1,
@@ -265,22 +265,22 @@ class BEVDepthLightningModel(LightningModule):
             gt_labels = [gt_label.cuda() for gt_label in gt_labels]
             
         if len(batch) == 7:
-            preds, feature_map, depth_preds = self(sweep_imgs, mats)
+            preds, feature_map_list, depth_preds = self(sweep_imgs, mats)
         else:
-            preds, feature_map = self(sweep_imgs, mats)
+            preds, feature_map_list = self(sweep_imgs, mats)
         
         if isinstance(self.model, torch.nn.parallel.DistributedDataParallel):
             targets = self.model.module.get_targets(gt_boxes, gt_labels)
             detection_loss = self.model.module.loss(targets, preds)
             if img_metas[0]["token"] != img_metas[1]["token"]:
                 print("warning: iamge pair failed")
-            simsiam_loss = self.model.module.simsiam(feature_map, gt_boxes) if self.model.module.is_ssl else 0
+            simsiam_loss = self.model.module.simsiam(feature_map_list, gt_boxes) if self.model.module.is_ssl else 0
         else:
             targets = self.model.get_targets(gt_boxes, gt_labels)
             detection_loss = self.model.loss(targets, preds)
             if img_metas[0]["token"] != img_metas[1]["token"]:
                 print("warning: iamge pair failed")
-            simsiam_loss = self.model.simsiam(feature_map, gt_boxes) if self.model.is_ssl else 0
+            simsiam_loss = self.model.simsiam(feature_map_list, gt_boxes) if self.model.is_ssl else 0
         
         if len(batch) == 7:
             if len(depth_labels.shape) == 5:

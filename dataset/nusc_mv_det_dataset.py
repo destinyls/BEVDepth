@@ -262,7 +262,7 @@ class NuscMVDetDataset(Dataset):
         
         self.ratio_range = [0.95, 1.05]
         self.roll_range = [-2.0, 2.0]
-        self.pitch_range = [-1.0, 1.0]
+        self.pitch_range = [-0.5, 0.5]
         
         if self.is_train:
             self._set_group_flag()
