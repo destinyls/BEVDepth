@@ -189,7 +189,7 @@ head_conf = {
 }
 
 self_training_conf = dict(type='SelfTraining',
-                     in_dim=240,
+                     in_dim=80,
                      proj_hidden_dim=2048,
                      pred_hidden_dim=512,
                      out_dim=2048,
@@ -465,6 +465,7 @@ class BEVDepthLightningModel(LightningModule):
             collate_fn=collate_fn,
             num_workers=4,
             sampler=None,
+            pin_memory=True
         )
         return val_loader
 
@@ -511,7 +512,7 @@ def run_cli():
     parser.set_defaults(
         profiler='simple',
         deterministic=False,
-        max_epochs=150,
+        max_epochs=80,
         accelerator='ddp',
         num_sanity_val_steps=0,
         gradient_clip_val=5,

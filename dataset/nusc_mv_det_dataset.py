@@ -231,7 +231,7 @@ class NuscMVDetDataset(Dataset):
         """
         super().__init__()
         self.infos = mmcv.load(info_path)
-        self.infos = random.sample(self.infos, int(0.1 * len(self.infos)))
+        self.infos = random.sample(self.infos, int(0.2 * len(self.infos)))
         
         self.is_train = is_train
         self.ida_aug_conf = ida_aug_conf
@@ -260,8 +260,8 @@ class NuscMVDetDataset(Dataset):
         self.cache_flag_index = -1
         self.cache_bda_augmentation = None
         
-        self.ratio_range = [0.95, 1.05]
-        self.roll_range = [-2.0, 2.0]
+        self.ratio_range = [0.85, 1.15]
+        self.roll_range = [-4.0, 4.0]
         self.pitch_range = [-1.0, 1.0]
 
     def _get_sample_indices(self):
@@ -725,7 +725,7 @@ class NuscMVDetDataset(Dataset):
             self.cache_bda_augmentation = self.sample_bda_augmentation(
             )
             rotate_bda, scale_bda, flip_dx, flip_dy = self.cache_bda_augmentation
-            self.cache_flag = False
+            self.cache_flag = True
             self.cache_flag_index = idx
         else:
             rotate_bda, scale_bda, flip_dx, flip_dy = self.sample_bda_augmentation(
