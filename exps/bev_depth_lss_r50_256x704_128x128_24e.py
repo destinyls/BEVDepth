@@ -189,7 +189,7 @@ head_conf = {
 }
 
 self_training_conf = dict(type='SelfTraining',
-                     in_dim=80,
+                     in_dim=240,
                      proj_hidden_dim=2048,
                      pred_hidden_dim=512,
                      out_dim=2048,
@@ -234,7 +234,7 @@ class BEVDepthLightningModel(LightningModule):
                                             output_dir=self.default_root_dir)
         self.model = BEVDepth(self.backbone_conf,
                               self.head_conf,
-                              self_training_conf=None,
+                              self_training_conf=self_training_conf,
                               is_train_depth=False)
         self.mode = 'valid'
         self.img_conf = img_conf
@@ -264,18 +264,18 @@ class BEVDepthLightningModel(LightningModule):
             gt_labels = [gt_label.cuda() for gt_label in gt_labels]
             
         if len(batch) == 7:
-            preds, feature_map, depth_preds = self(sweep_imgs, mats)
+            preds, feature_map_list, depth_preds = self(sweep_imgs, mats)
         else:
-            preds, feature_map = self(sweep_imgs, mats)
+            preds, feature_map_list = self(sweep_imgs, mats)
         
         if isinstance(self.model, torch.nn.parallel.DistributedDataParallel):
             targets = self.model.module.get_targets(gt_boxes, gt_labels)
             detection_loss = self.model.module.loss(targets, preds)
-            simsiam_loss = self.model.module.simsiam(feature_map, gt_boxes) if self.model.module.is_ssl else 0
+            simsiam_loss = self.model.module.simsiam(feature_map_list, gt_boxes) if self.model.module.is_ssl else 0
         else:
             targets = self.model.get_targets(gt_boxes, gt_labels)
             detection_loss = self.model.loss(targets, preds)
-            simsiam_loss = self.model.simsiam(feature_map, gt_boxes) if self.model.is_ssl else 0
+            simsiam_loss = self.model.simsiam(feature_map_list, gt_boxes) if self.model.is_ssl else 0
         
         if len(batch) == 7:
             if len(depth_labels.shape) == 5:

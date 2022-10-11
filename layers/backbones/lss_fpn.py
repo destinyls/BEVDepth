@@ -383,6 +383,85 @@ class LSSFPN(nn.Module):
                               4).matmul(points)
         return points
     
+    def homo_warping(self, depth, feature, sensor2ego_mat, intrin_mat, ida_mat, geom_xyz):     
+        bs, num_cams = sensor2ego_mat.shape[0], sensor2ego_mat.shape[1]
+        depth = depth.view(bs, num_cams, depth.shape[1], depth.shape[2], depth.shape[3])
+        feature = feature.view(bs, num_cams, feature.shape[1], feature.shape[2], feature.shape[3])
+        
+        channel_depth, channel_feature = depth.shape[2], feature.shape[2]
+        height, width = feature.shape[3], feature.shape[4]
+        ids1 = np.arange(0, bs, 2)
+        ids2 = np.arange(1, bs + 1, 2)
+        batch = bs // 2
+        
+        src_geom_xyz = geom_xyz[ids1]
+        src_depth, src_feature = depth[ids1], feature[ids2]
+        ref_depth, ref_feature = depth[ids2], feature[ids2]
+        src_ego2sensor_mat, ref_ego2sensor_mat = sensor2ego_mat.inverse()[ids1], sensor2ego_mat.inverse()[ids2]
+        
+        src_intrin_mat, ref_intrin_mat = intrin_mat[ids1], intrin_mat[ids2]
+        src_ida_mat, ref_ida_mat = ida_mat[ids1], ida_mat[ids2]
+        
+        src_proj = src_intrin_mat.matmul(src_ego2sensor_mat)
+        src_proj = src_ida_mat.matmul(src_proj)
+        ref_proj = ref_intrin_mat.matmul(ref_ego2sensor_mat)
+        ref_proj = ref_ida_mat.matmul(ref_proj)
+        with torch.no_grad():
+            proj = torch.matmul(ref_proj, torch.inverse(src_proj))
+            rot = proj[:, :, :3, :3]     # [B,num_cams,3,3]
+            trans = proj[:, :, :3, 3:4]  # [B,num_cams,3,1]
+            
+            y, x = torch.meshgrid([torch.arange(0, height, dtype=torch.float32, device=src_feature.device),
+                                   torch.arange(0, width, dtype=torch.float32, device=src_feature.device)])
+            y, x = y.contiguous(), x.contiguous()
+            y, x = y.view(height * width), x.view(height * width)
+            xyz = torch.stack((x, y, torch.ones_like(x)))         # [3, H*W]
+            xyz = torch.unsqueeze(xyz, 0).repeat(num_cams, 1, 1)  # [num_cams, 3, H*W]
+            xyz = torch.unsqueeze(xyz, 0).repeat(batch, 1, 1, 1)  # [B, num_cams, 3, H*W]
+            rot_xyz = torch.matmul(rot, xyz)                      # [B, num_cams, 3, H*W]
+            proj_xyz = rot_xyz + trans                            # [B, num_cams, 3, H*W]
+            
+            proj_xy = proj_xyz[:, :, :2, :] / proj_xyz[:, :, 2:3, :]  # [B, num_cams, 2, H*W]
+            proj_x_normalized = proj_xy[:, :, 0, :] / ((width - 1) / 2) - 1
+            proj_y_normalized = proj_xy[:, :, 1, :] / ((height - 1) / 2) - 1
+            proj_xy = torch.stack((proj_x_normalized, proj_y_normalized), dim=3)  # [B, num_cams, H*W, 2]
+            grid = proj_xy
+            
+        warped_ref_fea = F.grid_sample(ref_feature.view(batch * num_cams, channel_feature, height, width), 
+                                       grid.view(batch * num_cams, height, width, 2), mode='bilinear', padding_mode='zeros')
+        warped_ref_depth = F.grid_sample(ref_depth.view(batch * num_cams, channel_depth, height, width),
+                                         grid.view(batch * num_cams, height, width, 2), mode='bilinear', padding_mode='zeros')
+
+        img_feat_with_warped_depth = warped_ref_depth.unsqueeze(1) * src_feature.view(batch * num_cams, channel_feature, 1, height, width)
+        img_feat_with_warped_depth = self._forward_voxel_net(img_feat_with_warped_depth)
+        img_feat_with_warped_depth = img_feat_with_warped_depth.reshape(
+            batch,
+            num_cams,
+            img_feat_with_warped_depth.shape[1],
+            img_feat_with_warped_depth.shape[2],
+            img_feat_with_warped_depth.shape[3],
+            img_feat_with_warped_depth.shape[4],
+        )
+        img_warped_feat_with_depth = src_depth.view(batch * num_cams, 1, channel_depth, height, width) * warped_ref_fea.unsqueeze(2)
+        img_warped_feat_with_depth = self._forward_voxel_net(img_warped_feat_with_depth)
+        img_warped_feat_with_depth = img_warped_feat_with_depth.reshape(
+            batch,
+            num_cams,
+            img_warped_feat_with_depth.shape[1],
+            img_warped_feat_with_depth.shape[2],
+            img_warped_feat_with_depth.shape[3],
+            img_warped_feat_with_depth.shape[4],
+        )
+        
+        img_feat_depth_half_warped = torch.cat([img_feat_with_warped_depth, img_warped_feat_with_depth], dim=0)
+        img_feat_depth_half_warped = img_feat_depth_half_warped.permute(0, 1, 3, 4, 5, 2)
+        src_geom_xyz = src_geom_xyz.unsqueeze(0).repeat(2, 1, 1, 1, 1, 1, 1)
+        src_geom_xyz = src_geom_xyz.view(2 * batch, num_cams, src_geom_xyz.shape[3], 
+                                         src_geom_xyz.shape[4], src_geom_xyz.shape[5], src_geom_xyz.shape[6])
+        feature_map_warped = voxel_pooling(src_geom_xyz, img_feat_depth_half_warped.contiguous(),
+                                   self.voxel_num.cuda())
+        return feature_map_warped
+    
     def get_geometry(self, sensor2ego_mat, sensor2virtual_mat, intrin_mat, ida_mat, reference_heights, bda_mat):
         """Transfer points from camera coord to ego coord.
 
@@ -498,12 +577,24 @@ class LSSFPN(nn.Module):
         img_feat_with_depth = img_feat_with_depth.permute(0, 1, 3, 4, 5, 2)
         geom_xyz = ((geom_xyz - (self.voxel_coord - self.voxel_size / 2.0)) /
                     self.voxel_size).int()
-        
         feature_map = voxel_pooling(geom_xyz, img_feat_with_depth.contiguous(),
                                    self.voxel_num.cuda())
-        if is_return_depth:
-            return feature_map.contiguous(), depth
-        return feature_map.contiguous()
+    
+        if self.training:
+            feature_map_warped = self.homo_warping(
+                depth,
+                depth_feature[:, self.depth_channels:(self.depth_channels + self.output_channels)],
+                mats_dict['sensor2ego_mats'][:, sweep_index, ...],
+                mats_dict['intrin_mats'][:, sweep_index, ...],
+                mats_dict['ida_mats'][:, sweep_index, ...],
+                geom_xyz
+            )
+        if is_return_depth and self.training:
+            return feature_map.contiguous(), feature_map_warped.contiguous(), depth
+        elif self.training:
+            return feature_map.contiguous(), feature_map_warped.contiguous()
+        else:
+            return feature_map.contiguous()
 
     def forward(self,
                 sweep_imgs,
