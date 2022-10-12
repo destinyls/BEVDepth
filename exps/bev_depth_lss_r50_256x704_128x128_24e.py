@@ -233,7 +233,7 @@ class BEVDepthLightningModel(LightningModule):
                                             output_dir=self.default_root_dir)
         self.model = BEVDepth(self.backbone_conf,
                               self.head_conf,
-                              self_training_conf=None,
+                              self_training_conf=self_training_conf,
                               is_train_depth=False)
         self.mode = 'valid'
         self.img_conf = img_conf
@@ -509,7 +509,7 @@ def run_cli():
     parser.set_defaults(
         profiler='simple',
         deterministic=False,
-        max_epochs=150,
+        max_epochs=200,
         accelerator='ddp',
         num_sanity_val_steps=0,
         gradient_clip_val=5,
