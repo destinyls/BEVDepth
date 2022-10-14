@@ -41,42 +41,24 @@ class SelfTraining(nn.Module):
         self.grid_length = [self.real_h / self.bev_h, self.real_w / self.bev_w]
 
     def forward(self, feature_map_list, gt_boxes=None):
-        feature_map = feature_map_list[0]
+        feature_map, feature_map_warped = feature_map_list[0], feature_map_list[1]
+        ids1 = np.arange(0, feature_map.shape[0], 2)
+        src_feature_map = feature_map[ids1]
+        
+        # feature level 
+        ref_feature_map_1, ref_feature_map_2 = feature_map_warped[:feature_map_warped.shape[0]//2], feature_map_warped[feature_map_warped.shape[0]//2:]
+        x1, x2, x3 = src_feature_map, ref_feature_map_1, ref_feature_map_2
+        x1, x2, x3 = x1.permute(0, 2, 3, 1).contiguous(), x2.permute(0, 2, 3, 1).contiguous(), x3.permute(0, 2, 3, 1).contiguous()
+        x1, x2, x3 = x1.view(-1, x1.shape[-1]), x2.view(-1, x2.shape[-1]), x3.view(-1, x3.shape[-1])
+        loss_map = MSE(x1, x2) / 2 + MSE(x1, x3) / 2
+        
+        # object level
+        feature_map = torch.cat([src_feature_map, feature_map_warped], dim=0)  # [bs, c, h w]
         bs = feature_map.shape[0]
-        ids1 = np.arange(0, bs, 2)
-        ids2 = np.arange(1, bs + 1, 2)        
-        
-        # pixel level
-        '''
-        x1, x2 = feature_map[ids1], feature_map[ids2]
-        z1, z2 = self.projector(x1), self.projector(x2)
-        p1, p2 = self.predictor(z1), self.predictor(z2)
-        z1, z2 = z1.permute(0, 2, 3, 1).contiguous(), z1.permute(0, 2, 3, 1).contiguous()
-        p1, p2 = p1.permute(0, 2, 3, 1).contiguous(), p1.permute(0, 2, 3, 1).contiguous()
-        z1, z2 = z1.view(-1, z1.shape[-1]), z2.view(-1, z2.shape[-1])
-        p1, p2 = p1.view(-1, p1.shape[-1]), p2.view(-1, p2.shape[-1])
-        loss_map = D(p1, z2) / 2 + D(p2, z1) / 2
-        '''
-        # grid level
-        pixel_points = self.bev_voxels(num_voxels=[50, 50])
-        pixel_points = torch.from_numpy(pixel_points).to(device=feature_map.device)
-        pixel_points = pixel_points.view(1, -1, 2).repeat(bs, 1, 1)
-        pixel_rois = torch.cat([pixel_points - 1, pixel_points + 1], dim=-1)
-        batch_id = torch.arange(bs, dtype=torch.float, device=feature_map.device).unsqueeze(1)
-        batch_id = batch_id.repeat(1, pixel_rois.shape[1]).view(-1, 1)
-        pixel_rois = torch.cat([batch_id, pixel_rois.view(-1, 4)], dim=-1)
-        features_pixel_rois = roi_align(feature_map, pixel_rois, output_size=[1,1], spatial_scale=1, sampling_ratio=1)
-        features_pixel_rois = features_pixel_rois.view(bs, -1, features_pixel_rois.shape[1])
-        x1, x2 = features_pixel_rois[ids1], features_pixel_rois[ids2]
-        x1 = x1.view(-1, x1.shape[-1])
-        x2 = x2.view(-1, x2.shape[-1])
-        loss_map = MSE(x1, x2) / 2 + MSE(x2, x1) / 2
-        
-        # bbox level
-        gt_boxes = [gt_boxes[ids] for ids in ids1.tolist()]
-        max_objs = 200
-        bbox_locs = np.zeros((bs//2, 1 * max_objs, 2), dtype=np.float32)
-        bbox_mask = np.zeros((bs//2, max_objs), dtype=np.bool)
+        gt_boxes = [gt_boxes[ids] for ids in ids1.tolist()] 
+        max_objs, num_keys = 200, 1
+        bbox_locs = np.zeros((bs//3, num_keys * max_objs, 2), dtype=np.float32)
+        bbox_mask = np.zeros((bs//3, max_objs), dtype=np.bool)
         for batch_id in range(len(gt_boxes)):
             gt_bbox = gt_boxes[batch_id].cpu().numpy()
             if gt_bbox.shape[0] == 0:
@@ -85,31 +67,29 @@ class SelfTraining(nn.Module):
                 loc, lwh, rot_y = gt_bbox[obj_id, :3], gt_bbox[obj_id, 3:6], gt_bbox[obj_id, 6]
                 corners = self.get_object_axes(lwh, loc, rot_y)
                 pixels = self.point2bevpixel(corners)
-                bbox_locs[batch_id, (1 * obj_id):(1 * (obj_id+1)), :] = pixels
+                bbox_locs[batch_id, (num_keys * obj_id):(num_keys * (obj_id+1)), :] = pixels
                 bbox_mask[batch_id, obj_id] = True
         bbox_mask = torch.from_numpy(bbox_mask).to(device=feature_map.device)
-        bbox_locs = torch.from_numpy(bbox_locs).to(device=feature_map.device)
-        bbox_rois = torch.cat([bbox_locs - 2, bbox_locs + 2], dim=-1)
-        batch_id = torch.arange(bs//2, dtype=torch.float, device=feature_map.device).unsqueeze(1)
-        batch_id = batch_id.repeat(1, bbox_rois.shape[1]).view(-1, 1)
-        bbox_rois = torch.cat([batch_id, bbox_rois.view(-1, 4)], dim=-1)   
-        
-        feature_map1, feature_map2 = feature_map[ids1], feature_map[ids2]
-        features_bbox_rois1 = roi_align(feature_map1, bbox_rois, output_size=[1,1], spatial_scale=1, sampling_ratio=1)
-        features_bbox_rois2 = roi_align(feature_map2, bbox_rois, output_size=[1,1], spatial_scale=1, sampling_ratio=1)
-        
-        x1 = features_bbox_rois1.view(bs//2, -1, 1 * features_bbox_rois1.shape[1])
-        x2 = features_bbox_rois2.view(bs//2, -1, 1 * features_bbox_rois2.shape[1])
+        bbox_locs = torch.from_numpy(bbox_locs).to(device=feature_map.device).unsqueeze(0).repeat(3, 1, 1, 1).view(bs, num_keys * max_objs, 2) # [bs, max_obj, 2]
+        bbox_rois = torch.cat([bbox_locs - 2, bbox_locs + 2], dim=-1) # [bs, max_obj, 4]
+        batch_id = torch.arange(bs, dtype=torch.float, device=feature_map.device).unsqueeze(1) # [bs, 1]
+        batch_id = batch_id.repeat(1, bbox_rois.shape[1]).view(-1, 1) # [bs, max_obj] --> [bs * max_obj, 1]
+        bbox_rois = torch.cat([batch_id, bbox_rois.view(-1, 4)], dim=-1)
+                
         mask = bbox_mask.flatten()
+        features_bbox_rois = roi_align(feature_map, bbox_rois, output_size=[1,1], spatial_scale=1, sampling_ratio=1)
+        features_bbox_rois = features_bbox_rois.view(bs, -1, num_keys * features_bbox_rois.shape[1])
+        x1, x2, x3 = features_bbox_rois[:(bs//3)], features_bbox_rois[(bs//3):(2*bs//3)], features_bbox_rois[(2*bs//3):]
         x1 = x1.view(-1, x1.shape[-1])[mask]
         x2 = x2.view(-1, x2.shape[-1])[mask]
+        x3 = x3.view(-1, x3.shape[-1])[mask]
         if x1.shape[0] == 1:
             x1 = x1.repeat(2, 1)
             x2 = x2.repeat(2, 1)
-        loss_bbox = MSE(x1, x2) / 2 + MSE(x2, x1) / 2
-        
+            x3 = x3.repeat(2, 1)
+        loss_bbox = MSE(x1, x2) / 2 + MSE(x1, x3) / 2
         return loss_bbox + loss_map
-    
+         
     def bev_voxels(self, num_voxels):
         u, v = np.ogrid[0:num_voxels[0], 0:num_voxels[1]]
         uu, vv = np.meshgrid(u, v, sparse=False)
@@ -147,3 +127,9 @@ class SelfTraining(nn.Module):
         corner_points = np.array([0.0, 0.0, 1.0]).astype(float).reshape(1,3).T
         corner_points = np.dot(tr_matrix, corner_points).T
         return corner_points
+    
+    def get_object_mask(self, gt_boxes):
+        for batch_id in range(len(gt_boxes)):
+            gt_bbox = gt_boxes[batch_id].cpu().numpy()
+            if gt_bbox.shape[0] == 0:
+                continue
