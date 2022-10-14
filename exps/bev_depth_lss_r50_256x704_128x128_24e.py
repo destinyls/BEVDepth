@@ -1,7 +1,11 @@
 # Copyright (c) Megvii Inc. All rights reserved.
 from argparse import ArgumentParser, Namespace
 
+import os
+import math
+
 import mmcv
+import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
@@ -10,6 +14,8 @@ import torch.utils.data
 import torch.utils.data.distributed
 import torchvision.models as models
 from pytorch_lightning.core import LightningModule
+from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks import Callback
 from torch.cuda.amp.autocast_mode import autocast
 from torch.optim.lr_scheduler import MultiStepLR
 
@@ -18,18 +24,25 @@ from evaluators.det_mv_evaluators import DetMVNuscEvaluator
 from models.bev_depth import BEVDepth
 from utils.torch_dist import all_gather_object, get_rank, synchronize
 
+''''
 H = 900
 W = 1600
 final_dim = (256, 704)
+'''
+H = 1080
+W = 1920
+final_dim = (864, 1536)
+
 img_conf = dict(img_mean=[123.675, 116.28, 103.53],
                 img_std=[58.395, 57.12, 57.375],
                 to_rgb=True)
 
 backbone_conf = {
-    'x_bound': [-51.2, 51.2, 0.8],
+    'x_bound': [0, 102.4, 0.8],
     'y_bound': [-51.2, 51.2, 0.8],
     'z_bound': [-5, 3, 8],
-    'd_bound': [2.0, 58.0, 0.5],
+     # 'd_bound': [2.5, 10.5, 0.1],
+     'd_bound': [2.5, 10.5, 80],
     'final_dim':
     final_dim,
     'output_channels':
@@ -59,7 +72,7 @@ ida_aug_conf = {
     'resize_lim': (0.386, 0.55),
     'final_dim':
     final_dim,
-    'rot_lim': (-5.4, 5.4),
+    'rot_lim': (-4.0, 4.0),
     'H':
     H,
     'W':
@@ -67,18 +80,14 @@ ida_aug_conf = {
     'rand_flip':
     True,
     'bot_pct_lim': (0.0, 0.0),
-    'cams': [
-        'CAM_FRONT_LEFT', 'CAM_FRONT', 'CAM_FRONT_RIGHT', 'CAM_BACK_LEFT',
-        'CAM_BACK', 'CAM_BACK_RIGHT'
-    ],
-    'Ncams':
-    6,
+    'cams': ['CAM_FRONT'],
+    'Ncams': 1,
 }
 
 bda_aug_conf = {
-    'rot_lim': (-22.5, 22.5),
+    'rot_lim': (-10.0, 10.0),
     'scale_lim': (0.95, 1.05),
-    'flip_dx_ratio': 0.5,
+    'flip_dx_ratio': 0.0,
     'flip_dy_ratio': 0.5
 }
 
@@ -129,17 +138,17 @@ common_heads = dict(reg=(2, 2),
 
 bbox_coder = dict(
     type='CenterPointBBoxCoder',
-    post_center_range=[-61.2, -61.2, -10.0, 61.2, 61.2, 10.0],
+    post_center_range=[0.0, -61.2, -10.0, 122.4, 61.2, 10.0],
     max_num=500,
     score_threshold=0.1,
     out_size_factor=4,
     voxel_size=[0.2, 0.2, 8],
-    pc_range=[-51.2, -51.2, -5, 51.2, 51.2, 3],
+    pc_range=[0, -51.2, -5, 104.4, 51.2, 3],
     code_size=9,
 )
 
 train_cfg = dict(
-    point_cloud_range=[-51.2, -51.2, -5, 51.2, 51.2, 3],
+    point_cloud_range=[0, -51.2, -5, 102.4, 51.2, 3],
     grid_size=[512, 512, 1],
     voxel_size=[0.2, 0.2, 8],
     out_size_factor=4,
@@ -151,7 +160,7 @@ train_cfg = dict(
 )
 
 test_cfg = dict(
-    post_center_limit_range=[-61.2, -61.2, -10.0, 61.2, 61.2, 10.0],
+    post_center_limit_range=[0.0, -61.2, -10.0, 122.4, 61.2, 10.0],
     max_per_img=500,
     max_pool_nms=False,
     min_radius=[4, 12, 10, 1, 0.85, 0.175],
@@ -179,6 +188,15 @@ head_conf = {
     'min_radius': 2,
 }
 
+self_training_conf = dict(type='SelfTraining',
+                     in_dim=80,
+                     proj_hidden_dim=2048,
+                     pred_hidden_dim=512,
+                     out_dim=2048,
+                     pc_range=[0, -51.2, -5, 102.4, 51.2, 3],
+                     bev_h=128,
+                     bev_w=128,
+                )
 
 class BEVDepthLightningModel(LightningModule):
     MODEL_NAMES = sorted(name for name in models.__dict__
@@ -187,15 +205,16 @@ class BEVDepthLightningModel(LightningModule):
 
     def __init__(self,
                  gpus: int = 1,
-                 data_root='data/nuScenes',
+                 data_root='data/dair-v2x/',
                  eval_interval=1,
                  batch_size_per_device=8,
                  class_names=CLASSES,
                  backbone_conf=backbone_conf,
+                 self_training_conf=self_training_conf,
                  head_conf=head_conf,
                  ida_aug_conf=ida_aug_conf,
                  bda_aug_conf=bda_aug_conf,
-                 default_root_dir='./outputs/',
+                 default_root_dir='outputs/',
                  **kwargs):
         super().__init__()
         self.save_hyperparameters()
@@ -215,52 +234,69 @@ class BEVDepthLightningModel(LightningModule):
                                             output_dir=self.default_root_dir)
         self.model = BEVDepth(self.backbone_conf,
                               self.head_conf,
-                              is_train_depth=True)
+                              self_training_conf=self_training_conf,
+                              is_train_depth=False)
         self.mode = 'valid'
         self.img_conf = img_conf
         self.data_use_cbgs = False
         self.num_sweeps = 1
         self.sweep_idxes = list()
         self.key_idxes = list()
-        self.data_return_depth = True
+        self.data_return_depth = False
         self.downsample_factor = self.backbone_conf['downsample_factor']
         self.dbound = self.backbone_conf['d_bound']
-        self.depth_channels = int(
-            (self.dbound[1] - self.dbound[0]) / self.dbound[2])
+        self.depth_channels = int(self.dbound[2])
 
     def forward(self, sweep_imgs, mats):
         return self.model(sweep_imgs, mats)
 
     def training_step(self, batch):
-        (sweep_imgs, mats, _, _, gt_boxes, gt_labels, depth_labels) = batch
+        if len(batch) == 7:
+            (sweep_imgs, mats, _, _, gt_boxes, gt_labels, depth_labels) = batch
+        else:
+            (sweep_imgs, mats, _, _, gt_boxes, gt_labels) = batch
+        
         if torch.cuda.is_available():
             for key, value in mats.items():
                 mats[key] = value.cuda()
             sweep_imgs = sweep_imgs.cuda()
             gt_boxes = [gt_box.cuda() for gt_box in gt_boxes]
             gt_labels = [gt_label.cuda() for gt_label in gt_labels]
-        preds, depth_preds = self(sweep_imgs, mats)
+            
+        if len(batch) == 7:
+            preds, feature_map, depth_preds = self(sweep_imgs, mats)
+        else:
+            preds, feature_map = self(sweep_imgs, mats)
+        
         if isinstance(self.model, torch.nn.parallel.DistributedDataParallel):
             targets = self.model.module.get_targets(gt_boxes, gt_labels)
             detection_loss = self.model.module.loss(targets, preds)
+            simsiam_loss = self.model.module.simsiam(feature_map, gt_boxes) if self.model.module.is_ssl else 0
         else:
             targets = self.model.get_targets(gt_boxes, gt_labels)
             detection_loss = self.model.loss(targets, preds)
-
-        if len(depth_labels.shape) == 5:
-            # only key-frame will calculate depth loss
-            depth_labels = depth_labels[:, 0, ...]
-        depth_loss = self.get_depth_loss(depth_labels.cuda(), depth_preds)
-        self.log('detection_loss', detection_loss)
-        self.log('depth_loss', depth_loss)
-        return detection_loss + depth_loss
-
+            simsiam_loss = self.model.simsiam(feature_map, gt_boxes) if self.model.is_ssl else 0
+        
+        if len(batch) == 7:
+            if len(depth_labels.shape) == 5:
+                # only key-frame will calculate depth loss
+                depth_labels = depth_labels[:, 0, ...]
+            depth_loss = self.get_depth_loss(depth_labels.cuda(), depth_preds)
+            self.log('detection_loss', detection_loss)
+            self.log('simsiam_loss', simsiam_loss)
+            self.log('depth_loss', depth_loss)
+            return detection_loss + simsiam_loss + depth_loss
+        else:
+            self.log('detection_loss', detection_loss)
+            self.log('simsiam_loss', simsiam_loss)
+            return detection_loss + simsiam_loss
+            
     def get_depth_loss(self, depth_labels, depth_preds):
         depth_labels = self.get_downsampled_gt_depth(depth_labels)
         depth_preds = depth_preds.permute(0, 2, 3, 1).contiguous().view(
             -1, self.depth_channels)
         fg_mask = torch.max(depth_labels, dim=1).values > 0.0
-
+        
         with autocast(enabled=False):
             depth_loss = (F.binary_cross_entropy(
                 depth_preds[fg_mask],
@@ -292,19 +328,26 @@ class BEVDepthLightningModel(LightningModule):
         gt_depths_tmp = torch.where(gt_depths == 0.0,
                                     1e5 * torch.ones_like(gt_depths),
                                     gt_depths)
+        gt_depths_tmp = torch.where(gt_depths_tmp <= self.dbound[0],
+                                    1e5 * torch.ones_like(gt_depths),
+                                    gt_depths_tmp)
+        
         gt_depths = torch.min(gt_depths_tmp, dim=-1).values
         gt_depths = gt_depths.view(B * N, H // self.downsample_factor,
                                    W // self.downsample_factor)
-
+        '''
         gt_depths = (gt_depths -
                      (self.dbound[0] - self.dbound[2])) / self.dbound[2]
+        '''
+        gt_depths = self.dbound[2] * (torch.log(gt_depths) - math.log(self.dbound[0])) / (math.log(self.dbound[1]) - math.log(self.dbound[0]))
+        gt_depths = gt_depths.floor() + 1
         gt_depths = torch.where(
             (gt_depths < self.depth_channels + 1) & (gt_depths >= 0.0),
             gt_depths, torch.zeros_like(gt_depths))
+        
         gt_depths = F.one_hot(gt_depths.long(),
                               num_classes=self.depth_channels + 1).view(
                                   -1, self.depth_channels + 1)[:, 1:]
-
         return gt_depths.float()
 
     def eval_step(self, batch, batch_idx, prefix: str):
@@ -378,7 +421,7 @@ class BEVDepthLightningModel(LightningModule):
             bda_aug_conf=self.bda_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path='data/nuScenes/nuscenes_12hz_infos_train.pkl',
+            info_path='data/dair-v2x/dair_12hz_infos_train.pkl',
             is_train=True,
             use_cbgs=self.data_use_cbgs,
             img_conf=self.img_conf,
@@ -407,7 +450,7 @@ class BEVDepthLightningModel(LightningModule):
             bda_aug_conf=self.bda_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path='data/nuScenes/nuscenes_12hz_infos_val.pkl',
+            info_path='data/dair-v2x/dair_12hz_infos_val.pkl',
             is_train=False,
             img_conf=self.img_conf,
             num_sweeps=self.num_sweeps,
@@ -435,19 +478,21 @@ class BEVDepthLightningModel(LightningModule):
     def add_model_specific_args(parent_parser):  # pragma: no-cover
         return parent_parser
 
-
 def main(args: Namespace) -> None:
     if args.seed is not None:
         pl.seed_everything(args.seed)
-
+    print(args)
+    
     model = BEVDepthLightningModel(**vars(args))
-    trainer = pl.Trainer.from_argparse_args(args)
+    checkpoint_callback = ModelCheckpoint(dirpath='./outputs/bev_depth_lss_r50_256x704_128x128_24e/checkpoints', filename='{epoch}', every_n_epochs=10, save_last=True, save_top_k=-1)
+    trainer = pl.Trainer.from_argparse_args(args, callbacks=[checkpoint_callback])
     if args.evaluate:
-        trainer.test(model, ckpt_path=args.ckpt_path)
+        for ckpt_name in os.listdir(args.ckpt_path):
+            model_pth = os.path.join(args.ckpt_path, ckpt_name)
+            trainer.test(model, ckpt_path=model_pth)
     else:
         trainer.fit(model)
-
-
+        
 def run_cli():
     parent_parser = ArgumentParser(add_help=False)
     parent_parser = pl.Trainer.add_argparse_args(parent_parser)
@@ -466,17 +511,16 @@ def run_cli():
     parser.set_defaults(
         profiler='simple',
         deterministic=False,
-        max_epochs=24,
+        max_epochs=50,
         accelerator='ddp',
         num_sanity_val_steps=0,
         gradient_clip_val=5,
         limit_val_batches=0,
         enable_checkpointing=True,
-        precision=16,
+        precision=32,
         default_root_dir='./outputs/bev_depth_lss_r50_256x704_128x128_24e')
     args = parser.parse_args()
     main(args)
-
 
 if __name__ == '__main__':
     run_cli()

@@ -1,5 +1,6 @@
 '''Modified from # https://github.com/nutonomy/nuscenes-devkit/blob/57889ff20678577025326cfc24e57424a829be0a/python-sdk/nuscenes/eval/detection/evaluate.py#L222 # noqa
 '''
+import os
 import os.path as osp
 import tempfile
 
@@ -8,6 +9,8 @@ import numpy as np
 import pyquaternion
 from nuscenes.utils.data_classes import Box
 from pyquaternion import Quaternion
+
+from evaluators.result2kitti import result2kitti, kitti_evaluation
 
 __all__ = ['DetMVNuscEvaluator']
 
@@ -39,7 +42,7 @@ class DetMVNuscEvaluator():
         class_names,
         eval_version='detection_cvpr_2019',
         data_root='./data/nuScenes',
-        version='v1.0-trainval',
+        version='v1.0-mini',
         modality=dict(use_lidar=False,
                       use_camera=True,
                       use_radar=False,
@@ -203,18 +206,26 @@ class DetMVNuscEvaluator():
         Returns:
             dict[str, float]: Results of each evaluation metric.
         """
+        ## for nuscenes evaluatuin ##
         result_files, tmp_dir = self.format_results(results, img_metas,
                                                     result_names,
                                                     jsonfile_prefix)
+        print(result_files, tmp_dir)
+        '''
         if isinstance(result_files, dict):
             for name in result_names:
                 print('Evaluating bboxes of {}'.format(name))
                 self._evaluate_single(result_files[name])
         elif isinstance(result_files, str):
             self._evaluate_single(result_files)
-
         if tmp_dir is not None:
             tmp_dir.cleanup()
+        '''
+        dair_root = "data/dair-v2x"
+        gt_label_path = os.path.join("data/dair-v2x-kitti", "training", "label_2")
+        results_path = "outputs"         
+        pred_label_path = result2kitti(result_files["img_bbox"], results_path, dair_root, demo=False)
+        kitti_evaluation(pred_label_path, gt_label_path, metric_path="output/bev_depth_lss_r50_256x704_128x128_24e")
 
     def _format_bbox(self, results, img_metas, jsonfile_prefix=None):
         """Convert the results to the standard format.
@@ -232,7 +243,6 @@ class DetMVNuscEvaluator():
         mapped_class_names = self.class_names
 
         print('Start to convert detection format...')
-
         for sample_id, det in enumerate(mmcv.track_iter_progress(results)):
             boxes, scores, labels = det
             boxes = boxes
@@ -277,6 +287,7 @@ class DetMVNuscEvaluator():
                     translation=nusc_box.center.tolist(),
                     size=nusc_box.wlh.tolist(),
                     rotation=nusc_box.orientation.elements.tolist(),
+                    box_yaw=box_yaw,
                     velocity=nusc_box.velocity[:2],
                     detection_name=name,
                     detection_score=float(scores[i]),
@@ -297,3 +308,104 @@ class DetMVNuscEvaluator():
         print('Results writes to', res_path)
         mmcv.dump(nusc_submissions, res_path)
         return res_path
+
+    def _format_bbox_rope3d(self, results, jsonfile_prefix=None):
+        """Convert the results to the standard format.
+
+        Args:
+            results (list[dict]): Testing results of the dataset.
+            jsonfile_prefix (str): The prefix of the output jsonfile.
+                You can specify the output directory/filename by
+                modifying the jsonfile_prefix. Default: None.
+
+        Returns:
+            str: Path of the output json file.
+        """
+        nusc_annos = {}
+        mapped_class_names = self.CLASSES
+        
+        print('Start to convert detection format...')
+        for sample_id, det in enumerate(mmcv.track_iter_progress(results)):
+            annos = []
+            sample_token = self.data_infos[sample_id]['token']
+            
+            box3d = det['boxes_3d']
+            scores = det['scores_3d'].numpy()
+            labels = det['labels_3d'].numpy()
+
+            box_gravity_center = box3d.gravity_center.numpy()
+            box_dims = box3d.dims.numpy()
+            box_yaw = box3d.yaw.numpy()
+            # box_yaw = -box_yaw - np.pi / 2
+
+            for i in range(len(box3d)):
+                name = mapped_class_names[labels[i]]
+                nusc_anno = dict(
+                    sample_token=sample_token,
+                    translation=box_gravity_center[i],
+                    size=box_dims[i],
+                    rot_y=box_yaw[i],
+                    detection_name=name,
+                    detection_score=scores[i])
+                annos.append(nusc_anno)
+            nusc_annos[sample_token] = annos
+        nusc_submissions = {
+            'meta': self.modality,
+            'results': nusc_annos,
+        }
+
+        mmcv.mkdir_or_exist(jsonfile_prefix)
+        res_path = osp.join(jsonfile_prefix, 'results_nusc.json')
+        print('Results writes to', res_path)
+        mmcv.dump(nusc_submissions, res_path)
+        return res_path
+    
+    def format_results_rope3d(self, results, jsonfile_prefix=None):
+        """Format the results to json (standard format for COCO evaluation).
+
+        Args:
+            results (list[dict]): Testing results of the dataset.
+            jsonfile_prefix (str | None): The prefix of json files. It includes
+                the file path and the prefix of filename, e.g., "a/b/prefix".
+                If not specified, a temp file will be created. Default: None.
+
+        Returns:
+            tuple: Returns (result_files, tmp_dir), where `result_files` is a \
+                dict containing the json filepaths, `tmp_dir` is the temporal \
+                directory created for saving json files when \
+                `jsonfile_prefix` is not specified.
+        """
+        assert isinstance(results, list), 'results must be a list'
+        if jsonfile_prefix is None:
+            tmp_dir = tempfile.TemporaryDirectory()
+            jsonfile_prefix = osp.join(tmp_dir.name, 'results')
+        else:
+            tmp_dir = None
+
+        # currently the output prediction results could be in two formats
+        # 1. list of dict('boxes_3d': ..., 'scores_3d': ..., 'labels_3d': ...)
+        # 2. list of dict('pts_bbox' or 'img_bbox':
+        #     dict('boxes_3d': ..., 'scores_3d': ..., 'labels_3d': ...))
+        # this is a workaround to enable evaluation of both formats on nuScenes
+        # refer to https://github.com/open-mmlab/mmdetection3d/issues/449
+        if not ('pts_bbox' in results[0] or 'img_bbox' in results[0]):
+            result_files = self._format_bbox_rope3d(results, jsonfile_prefix)
+        else:
+            # should take the inner dict out of 'pts_bbox' or 'img_bbox' dict
+            result_files = dict()
+            for name in results[0]:
+                print(f'\nFormating bboxes of {name}')
+                results_ = [out[name] for out in results]
+                tmp_file_ = osp.join(jsonfile_prefix, name)
+                result_files.update(
+                    {name: self._format_bbox_rope3d(results_, tmp_file_)})
+        return result_files, tmp_dir
+    
+if __name__ == "__main__":
+    result_files = "./outputs/bev_depth_lss_r50_256x704_128x128_24e/results_nusc.json"
+    dair_root = "data/dair-v2x"
+    gt_label_path = os.path.join("data/dair-v2x-kitti", "training", "label_2")
+    results_path = "outputs"
+    pred_label_path = result2kitti(result_files, results_path, dair_root, demo=False)
+    pred_label_path = "outputs/data"
+    kitti_evaluation(pred_label_path, gt_label_path, metric_path="output/bev_depth_lss_r50_256x704_128x128_24e")

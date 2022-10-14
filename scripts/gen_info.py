@@ -107,11 +107,11 @@ def generate_info(nusc, scenes):
 
 
 def main():
-    nusc = NuScenes(version='v1.0-trainval',
+    nusc = NuScenes(version='v1.0-mini',
                     dataroot='./data/nuScenes/',
                     verbose=True)
-    train_scenes = splits.train
-    val_scenes = splits.val
+    train_scenes = splits.mini_train
+    val_scenes = splits.mini_val
     train_infos = generate_info(nusc, train_scenes)
     val_infos = generate_info(nusc, val_scenes)
     mmcv.dump(train_infos, './data/nuScenes/nuscenes_12hz_infos_train.pkl')
