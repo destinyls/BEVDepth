@@ -64,16 +64,16 @@ class BEVDepth(nn.Module):
             tuple(list[dict]): Output results for tasks.
         """
         if self.is_train_depth and self.training:
-            x, depth_pred = self.backbone(x,
+            x, x_warped, depth_pred = self.backbone(x,
                                           mats_dict,
                                           timestamps,
                                           is_return_depth=True)
             preds = self.head(x)
-            return preds, x, depth_pred
+            return preds, [x, x_warped], depth_pred
         elif self.training:
-            x = self.backbone(x, mats_dict, timestamps)
+            x, x_warped = self.backbone(x, mats_dict, timestamps)
             preds = self.head(x)
-            return preds, x
+            return preds, [x, x_warped]
         else:
             x = self.backbone(x, mats_dict, timestamps)
             preds = self.head(x)

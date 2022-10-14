@@ -21,77 +21,18 @@ def D(p, z, version='simplified'): # negative cosine similarity
         return - F.cosine_similarity(p, z.detach(), dim=-1).mean()
     else:
         raise Exception
+    
+def MSE(p, z, reduction="mean"):
+    return F.mse_loss(p, z.detach(), reduction=reduction) 
 
 @NECKS.register_module()
 class SelfTraining(nn.Module):
-    def __init__(self,
-                 in_dim=80,
-                 proj_hidden_dim=2048,
-                 pred_hidden_dim=512,
-                 out_dim=2048,
+    def __init__(self,                 
                  pc_range=[0, -51.2, -5, 102.4, 51.2, 3],
                  bev_h=128,
                  bev_w=128
                  ):
         super().__init__()
-        self.in_dim = in_dim
-        '''
-        self.projector = nn.Sequential(
-                nn.Conv2d(in_dim,
-                          proj_hidden_dim,
-                          kernel_size=1,
-                          padding=1 // 2,
-                          bias=True),
-                nn.BatchNorm2d(proj_hidden_dim),
-                nn.ReLU(inplace=True),
-                nn.Conv2d(proj_hidden_dim,
-                          proj_hidden_dim,
-                          kernel_size=1,
-                          padding=1 // 2,
-                          bias=True),
-                nn.BatchNorm2d(proj_hidden_dim),
-                nn.ReLU(inplace=True),
-                nn.Conv2d(proj_hidden_dim,
-                          out_dim,
-                          kernel_size=1,
-                          padding=1 // 2,
-                          bias=True),
-                nn.BatchNorm2d(out_dim)
-            )
-        
-        self.predictor = nn.Sequential(
-            nn.Conv2d(out_dim,
-                      pred_hidden_dim,
-                      kernel_size=1,
-                      padding=1 // 2,
-                      bias=True),
-            nn.BatchNorm2d(pred_hidden_dim),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(pred_hidden_dim,
-                      out_dim,
-                      kernel_size=1,
-                      padding=1 // 2,
-                      bias=True)
-        )
-        '''
-        self.projector = nn.Sequential(
-                nn.Linear(in_dim, proj_hidden_dim),
-                nn.BatchNorm1d(proj_hidden_dim),
-                nn.ReLU(inplace=True),
-                nn.Linear(proj_hidden_dim, proj_hidden_dim),
-                nn.BatchNorm1d(proj_hidden_dim),
-                nn.ReLU(inplace=True),
-                nn.Linear(proj_hidden_dim, out_dim),
-                nn.BatchNorm1d(out_dim)
-            )
-        
-        self.predictor = nn.Sequential(
-            nn.Linear(out_dim, pred_hidden_dim),
-            nn.BatchNorm1d(pred_hidden_dim),
-            nn.ReLU(inplace=True),
-            nn.Linear(pred_hidden_dim, out_dim)
-        )
-        
         self.pc_range = pc_range
         self.bev_h = bev_h
         self.bev_w = bev_w
@@ -99,7 +40,8 @@ class SelfTraining(nn.Module):
         self.real_h = self.pc_range[4] - self.pc_range[1]
         self.grid_length = [self.real_h / self.bev_h, self.real_w / self.bev_w]
 
-    def forward(self, feature_map, gt_boxes=None):
+    def forward(self, feature_map_list, gt_boxes=None):
+        feature_map = feature_map_list[0]
         bs = feature_map.shape[0]
         ids1 = np.arange(0, bs, 2)
         ids2 = np.arange(1, bs + 1, 2)        
@@ -115,7 +57,6 @@ class SelfTraining(nn.Module):
         p1, p2 = p1.view(-1, p1.shape[-1]), p2.view(-1, p2.shape[-1])
         loss_map = D(p1, z2) / 2 + D(p2, z1) / 2
         '''
-        
         # grid level
         pixel_points = self.bev_voxels(num_voxels=[50, 50])
         pixel_points = torch.from_numpy(pixel_points).to(device=feature_map.device)
@@ -126,13 +67,10 @@ class SelfTraining(nn.Module):
         pixel_rois = torch.cat([batch_id, pixel_rois.view(-1, 4)], dim=-1)
         features_pixel_rois = roi_align(feature_map, pixel_rois, output_size=[1,1], spatial_scale=1, sampling_ratio=1)
         features_pixel_rois = features_pixel_rois.view(bs, -1, features_pixel_rois.shape[1])
-        
         x1, x2 = features_pixel_rois[ids1], features_pixel_rois[ids2]
         x1 = x1.view(-1, x1.shape[-1])
         x2 = x2.view(-1, x2.shape[-1])
-        z1, z2 = self.projector(x1), self.projector(x2)
-        p1, p2 = self.predictor(z1), self.predictor(z2)
-        loss_map = D(p1, z2) / 2 + D(p2, z1) / 2
+        loss_map = MSE(x1, x2) / 2 + MSE(x2, x1) / 2
         
         # bbox level
         gt_boxes = [gt_boxes[ids] for ids in ids1.tolist()]
@@ -145,16 +83,6 @@ class SelfTraining(nn.Module):
                 continue
             for obj_id in range(gt_bbox.shape[0]):
                 loc, lwh, rot_y = gt_bbox[obj_id, :3], gt_bbox[obj_id, 3:6], gt_bbox[obj_id, 6]
-                '''
-                corners = self.get_object_corners(lwh, loc, rot_y)
-                pixels = self.point2bevpixel(corners)
-                pixels_w, pixels_h = pixels[:,0], pixels[:,1]
-                c = (0, 255, 255)
-                cv2.line(bev_demo, (pixels_w[0], pixels_h[0]), (pixels_w[1], pixels_h[1]), c, 2)
-                cv2.line(bev_demo, (pixels_w[0], pixels_h[0]), (pixels_w[2], pixels_h[2]), c, 2)
-                cv2.line(bev_demo, (pixels_w[1], pixels_h[1]), (pixels_w[3], pixels_h[3]), c, 2)
-                cv2.line(bev_demo, (pixels_w[2], pixels_h[2]), (pixels_w[3], pixels_h[3]), c, 2)
-                '''
                 corners = self.get_object_axes(lwh, loc, rot_y)
                 pixels = self.point2bevpixel(corners)
                 bbox_locs[batch_id, (1 * obj_id):(1 * (obj_id+1)), :] = pixels
@@ -178,9 +106,7 @@ class SelfTraining(nn.Module):
         if x1.shape[0] == 1:
             x1 = x1.repeat(2, 1)
             x2 = x2.repeat(2, 1)
-        z1, z2 = self.projector(x1), self.projector(x2)
-        p1, p2 = self.predictor(z1), self.predictor(z2)
-        loss_bbox = D(p1, z2) / 2 + D(p2, z1) / 2
+        loss_bbox = MSE(x1, x2) / 2 + MSE(x2, x1) / 2
         
         return loss_bbox + loss_map
     
