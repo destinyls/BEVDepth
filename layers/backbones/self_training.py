@@ -3,6 +3,9 @@ from termios import BS1
 import cv2
 import numpy as np
 
+from einops import rearrange, repeat
+from torch import einsum
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -25,6 +28,50 @@ def D(p, z, version='simplified'): # negative cosine similarity
 def MSE(p, z, reduction="mean"):
     return F.mse_loss(p, z.detach(), reduction=reduction) 
 
+def compute_imitation_loss(feature_pred, feature_target, weights, reduction="mean"):
+    # input:  [B, C, H, W]
+    # target: [B, C, H, W]
+    # weight: [B, H, W]
+    feature_target = feature_target.detach()
+    diff = feature_pred - feature_target
+    loss = 0.5 * diff ** 2
+    loss = loss * weights.unsqueeze(1).repeat(1, feature_pred.shape[1], 1, 1)
+    if reduction == "mean":
+        return (loss.sum() / weights.sum())
+    else:
+        return loss
+    
+def compute_resize_affinity_loss(feature_pred, feature_target):
+    feature_target = feature_target.detach()
+    B, C, H, W = feature_pred.shape
+    
+    resize_shape = [feature_target.shape[-2] // 16, feature_target.shape[-1] // 16]
+    feature_pred_down = F.interpolate(feature_pred, size=resize_shape, mode="bilinear")
+    feature_target_down = F.interpolate(feature_target, size=resize_shape, mode="bilinear")
+    
+    feature_target_down = feature_target_down.reshape(B, C, -1)
+    depth_affinity = torch.bmm(feature_target_down.permute(0, 2, 1), feature_target_down)
+    feature_pred_down = feature_pred_down.reshape(B, C, -1)
+    rgb_affinity = torch.bmm(feature_pred_down.permute(0, 2, 1), feature_pred_down)
+    
+    loss = F.l1_loss(rgb_affinity, depth_affinity, reduction='mean') / B
+    return loss
+
+def compute_local_affinity_loss(feature_pred, feature_target):
+    local_shape = [feature_target.shape[-2] // 16, feature_target.shape[-1] // 16]
+    feature_target = feature_target.detach()
+    B, _, H, W = feature_pred.shape
+    
+    feature_pred_q = rearrange(feature_pred, 'b c (h p1) (w p2) -> (b h w) (p1 p2) c', p1=local_shape[0], p2=local_shape[1])
+    feature_pred_k = rearrange(feature_pred, 'b c (h p1) (w p2) -> (b h w) (p1 p2) c', p1=local_shape[0], p2=local_shape[1])
+    rgb_affinity = einsum('b i d, b j d -> b i j', feature_pred_q, feature_pred_k)
+    feature_target_q = rearrange(feature_target, 'b c (h p1) (w p2) -> (b h w) (p1 p2) c', p1=local_shape[0], p2=local_shape[1])
+    feature_target_k = rearrange(feature_target, 'b c (h p1) (w p2) -> (b h w) (p1 p2) c', p1=local_shape[0], p2=local_shape[1])
+    depth_affinity = einsum('b i d, b j d -> b i j', feature_target_q, feature_target_k)
+
+    loss = F.l1_loss(rgb_affinity, depth_affinity, reduction='mean') / B
+    return loss
+
 @NECKS.register_module()
 class SelfTraining(nn.Module):
     def __init__(self,                 
@@ -44,59 +91,19 @@ class SelfTraining(nn.Module):
         feature_map, feature_map_warped = feature_map_list[0], feature_map_list[1]
         ids1 = np.arange(0, feature_map.shape[0], 2)
         src_feature_map = feature_map[ids1]
+        gt_boxes = [gt_boxes[ids] for ids in ids1.tolist()] 
         
-        # feature level 
+        bbox_mask = self.get_bbox_mask(gt_boxes)
+        bbox_mask = torch.from_numpy(bbox_mask).to(device=feature_map.device)
+        weights = bbox_mask.float()
+
+        # feature level
         ref_feature_map_1, ref_feature_map_2 = feature_map_warped[:feature_map_warped.shape[0]//2], feature_map_warped[feature_map_warped.shape[0]//2:]
         x1, x2, x3 = src_feature_map, ref_feature_map_1, ref_feature_map_2
-        x1, x2, x3 = x1.permute(0, 2, 3, 1).contiguous(), x2.permute(0, 2, 3, 1).contiguous(), x3.permute(0, 2, 3, 1).contiguous()
-        x1, x2, x3 = x1.view(-1, x1.shape[-1]), x2.view(-1, x2.shape[-1]), x3.view(-1, x3.shape[-1])
-        loss_map = MSE(x1, x2) / 2 + MSE(x1, x3) / 2
-        
-        # object level
-        feature_map = torch.cat([src_feature_map, feature_map_warped], dim=0)  # [bs, c, h w]
-        bs = feature_map.shape[0]
-        gt_boxes = [gt_boxes[ids] for ids in ids1.tolist()] 
-        max_objs, num_keys = 200, 1
-        bbox_locs = np.zeros((bs//3, num_keys * max_objs, 2), dtype=np.float32)
-        bbox_mask = np.zeros((bs//3, max_objs), dtype=np.bool)
-        for batch_id in range(len(gt_boxes)):
-            gt_bbox = gt_boxes[batch_id].cpu().numpy()
-            if gt_bbox.shape[0] == 0:
-                continue
-            for obj_id in range(gt_bbox.shape[0]):
-                loc, lwh, rot_y = gt_bbox[obj_id, :3], gt_bbox[obj_id, 3:6], gt_bbox[obj_id, 6]
-                corners = self.get_object_axes(lwh, loc, rot_y)
-                pixels = self.point2bevpixel(corners)
-                bbox_locs[batch_id, (num_keys * obj_id):(num_keys * (obj_id+1)), :] = pixels
-                bbox_mask[batch_id, obj_id] = True
-        bbox_mask = torch.from_numpy(bbox_mask).to(device=feature_map.device)
-        bbox_locs = torch.from_numpy(bbox_locs).to(device=feature_map.device).unsqueeze(0).repeat(3, 1, 1, 1).view(bs, num_keys * max_objs, 2) # [bs, max_obj, 2]
-        bbox_rois = torch.cat([bbox_locs - 2, bbox_locs + 2], dim=-1) # [bs, max_obj, 4]
-        batch_id = torch.arange(bs, dtype=torch.float, device=feature_map.device).unsqueeze(1) # [bs, 1]
-        batch_id = batch_id.repeat(1, bbox_rois.shape[1]).view(-1, 1) # [bs, max_obj] --> [bs * max_obj, 1]
-        bbox_rois = torch.cat([batch_id, bbox_rois.view(-1, 4)], dim=-1)
-                
-        mask = bbox_mask.flatten()
-        features_bbox_rois = roi_align(feature_map, bbox_rois, output_size=[1,1], spatial_scale=1, sampling_ratio=1)
-        features_bbox_rois = features_bbox_rois.view(bs, -1, num_keys * features_bbox_rois.shape[1])
-        x1, x2, x3 = features_bbox_rois[:(bs//3)], features_bbox_rois[(bs//3):(2*bs//3)], features_bbox_rois[(2*bs//3):]
-        x1 = x1.view(-1, x1.shape[-1])[mask]
-        x2 = x2.view(-1, x2.shape[-1])[mask]
-        x3 = x3.view(-1, x3.shape[-1])[mask]
-        if x1.shape[0] == 1:
-            x1 = x1.repeat(2, 1)
-            x2 = x2.repeat(2, 1)
-            x3 = x3.repeat(2, 1)
-        loss_bbox = MSE(x1, x2) / 2 + MSE(x1, x3) / 2
-        return loss_bbox + loss_map
-         
-    def bev_voxels(self, num_voxels):
-        u, v = np.ogrid[0:num_voxels[0], 0:num_voxels[1]]
-        uu, vv = np.meshgrid(u, v, sparse=False)
-        voxel_size = np.array([self.bev_h / num_voxels[0], self.bev_w / num_voxels[1]])
-        uv = np.concatenate((uu[:,:,np.newaxis], vv[:,:,np.newaxis]), axis=-1)
-        uv = uv * voxel_size + 0.5 * voxel_size
-        return uv.astype(np.float32)
+        feature_imitation_loss = compute_imitation_loss(x2, x1, weights) / 2 + compute_imitation_loss(x3, x1, weights) / 2
+        feature_affinity_loss = compute_resize_affinity_loss(x2, x1) / 2 + compute_resize_affinity_loss(x3, x1) / 2
+        print(feature_affinity_loss + feature_imitation_loss)
+        return feature_imitation_loss + feature_affinity_loss
     
     def point2bevpixel(self, points):
         pixels_w = (points[:, 0] - self.pc_range[0]) / self.grid_length[0]  # xs
@@ -128,8 +135,28 @@ class SelfTraining(nn.Module):
         corner_points = np.dot(tr_matrix, corner_points).T
         return corner_points
     
-    def get_object_mask(self, gt_boxes):
+    def local2global(self, points, center_lidar, yaw_lidar):
+        points_3d_lidar = points.reshape(-1, 3)
+        rot_mat = np.array([[math.cos(yaw_lidar), -math.sin(yaw_lidar), 0], 
+                            [math.sin(yaw_lidar), math.cos(yaw_lidar), 0], 
+                            [0, 0, 1]])
+        points_3d_lidar = np.matmul(rot_mat, points_3d_lidar.T).T + center_lidar
+        return points_3d_lidar
+    
+    def get_bbox_mask(self, gt_boxes, resolution=0.5):
+        bbox_mask = np.zeros((len(gt_boxes), self.bev_h, self.bev_w), dtype=np.bool)
         for batch_id in range(len(gt_boxes)):
             gt_bbox = gt_boxes[batch_id].cpu().numpy()
             if gt_bbox.shape[0] == 0:
                 continue
+            for obj_id in range(gt_bbox.shape[0]):
+                loc, lwh, rot_y = gt_bbox[obj_id, :3], gt_bbox[obj_id, 3:6], gt_bbox[obj_id, 6]
+                shape = np.array([lwh[0] / resolution, lwh[1] / resolution]).astype(np.int32)
+                n, m = [(ss - 1.) / 2. for ss in shape]
+                x, y = np.ogrid[-m:m + 1, -n:n + 1]
+                xv, yv = np.meshgrid(x, y, sparse=False)
+                xyz = np.concatenate((xv[:,:,np.newaxis], yv[:,:,np.newaxis], np.ones_like(xv)[:,:,np.newaxis]), axis=-1)
+                obj_points = self.local2global(xyz * resolution, loc, rot_y)
+                obj_pixels = self.point2bevpixel(obj_points)
+                bbox_mask[batch_id, obj_pixels[:, 1], obj_pixels[:, 0]] = True
+        return bbox_mask
