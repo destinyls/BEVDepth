@@ -44,18 +44,24 @@ class SelfTraining(nn.Module):
         feature_map, feature_map_warped = feature_map_list[0], feature_map_list[1]
         ids1 = np.arange(0, feature_map.shape[0], 2)
         src_feature_map = feature_map[ids1]
+        gt_boxes = [gt_boxes[ids] for ids in ids1.tolist()] 
+        
+        bbox_mask = self.get_bbox_mask(gt_boxes)
+        bbox_mask = torch.from_numpy(bbox_mask).to(device=feature_map.device)
+        bbox_mask = bbox_mask.float()  # [B, H, W]
         
         # feature level 
         ref_feature_map_1, ref_feature_map_2 = feature_map_warped[:feature_map_warped.shape[0]//2], feature_map_warped[feature_map_warped.shape[0]//2:]
         x1, x2, x3 = src_feature_map, ref_feature_map_1, ref_feature_map_2
         x1, x2, x3 = x1.permute(0, 2, 3, 1).contiguous(), x2.permute(0, 2, 3, 1).contiguous(), x3.permute(0, 2, 3, 1).contiguous()
+        x1, x2, x3 = x1 * bbox_mask.unsqueeze(-1), x2 * bbox_mask.unsqueeze(-1), x3 * bbox_mask.unsqueeze(-1)
         x1, x2, x3 = x1.view(-1, x1.shape[-1]), x2.view(-1, x2.shape[-1]), x3.view(-1, x3.shape[-1])
         loss_map = MSE(x1, x2) / 2 + MSE(x1, x3) / 2
         
         # object level
         feature_map = torch.cat([src_feature_map, feature_map_warped], dim=0)  # [bs, c, h w]
         bs = feature_map.shape[0]
-        gt_boxes = [gt_boxes[ids] for ids in ids1.tolist()] 
+        
         max_objs, num_keys = 200, 1
         bbox_locs = np.zeros((bs//3, num_keys * max_objs, 2), dtype=np.float32)
         bbox_mask = np.zeros((bs//3, max_objs), dtype=np.bool)
@@ -128,8 +134,29 @@ class SelfTraining(nn.Module):
         corner_points = np.dot(tr_matrix, corner_points).T
         return corner_points
     
-    def get_object_mask(self, gt_boxes):
+    def local2global(self, points, center_lidar, yaw_lidar):
+        points_3d_lidar = points.reshape(-1, 3)
+        rot_mat = np.array([[math.cos(yaw_lidar), -math.sin(yaw_lidar), 0], 
+                            [math.sin(yaw_lidar), math.cos(yaw_lidar), 0], 
+                            [0, 0, 1]])
+        points_3d_lidar = np.matmul(rot_mat, points_3d_lidar.T).T + center_lidar
+        return points_3d_lidar
+    
+    def get_bbox_mask(self, gt_boxes, resolution=0.5):
+        bbox_mask = np.zeros((len(gt_boxes), self.bev_h, self.bev_w), dtype=np.bool)
         for batch_id in range(len(gt_boxes)):
             gt_bbox = gt_boxes[batch_id].cpu().numpy()
             if gt_bbox.shape[0] == 0:
                 continue
+            for obj_id in range(gt_bbox.shape[0]):
+                loc, lwh, rot_y = gt_bbox[obj_id, :3], gt_bbox[obj_id, 3:6], gt_bbox[obj_id, 6]
+                lwh = lwh * 1.5
+                shape = np.array([lwh[0] / resolution, lwh[1] / resolution]).astype(np.int32)
+                n, m = [(ss - 1.) / 2. for ss in shape]
+                x, y = np.ogrid[-m:m + 1, -n:n + 1]
+                xv, yv = np.meshgrid(x, y, sparse=False)
+                xyz = np.concatenate((xv[:,:,np.newaxis], yv[:,:,np.newaxis], np.ones_like(xv)[:,:,np.newaxis]), axis=-1)
+                obj_points = self.local2global(xyz * resolution, loc, rot_y)
+                obj_pixels = self.point2bevpixel(obj_points)
+                bbox_mask[batch_id, obj_pixels[:, 1], obj_pixels[:, 0]] = True
+        return bbox_mask
