@@ -231,7 +231,7 @@ class NuscMVDetDataset(Dataset):
         """
         super().__init__()
         self.infos = mmcv.load(info_path)
-        # self.infos = random.sample(self.infos, int(0.2 * len(self.infos)))
+        self.infos = random.sample(self.infos, int(0.2 * len(self.infos)))
         
         self.is_train = is_train
         self.ida_aug_conf = ida_aug_conf

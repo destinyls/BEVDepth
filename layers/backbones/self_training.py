@@ -2,10 +2,6 @@ import math
 from termios import BS1
 import cv2
 import numpy as np
-
-from einops import rearrange, repeat
-from torch import einsum
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -28,50 +24,43 @@ def D(p, z, version='simplified'): # negative cosine similarity
 def MSE(p, z, reduction="mean"):
     return F.mse_loss(p, z.detach(), reduction=reduction) 
 
-def compute_imitation_loss(feature_pred, feature_target, weights, reduction="mean"):
-    # input:  [B, C, H, W]
-    # target: [B, C, H, W]
-    # weight: [B, H, W]
-    feature_target = feature_target.detach()
-    diff = feature_pred - feature_target
+def compute_imitation_loss(input, target, weights):
+    target = torch.where(torch.isnan(target), input, target)  # ignore nan targets
+    diff = input - target
     loss = 0.5 * diff ** 2
-    loss = loss * weights.unsqueeze(1).repeat(1, feature_pred.shape[1], 1, 1)
-    if reduction == "mean":
-        return (loss.sum() / weights.sum())
-    else:
-        return loss
-    
-def compute_resize_affinity_loss(feature_pred, feature_target):
-    feature_target = feature_target.detach()
-    B, C, H, W = feature_pred.shape
-    
-    resize_shape = [feature_target.shape[-2] // 16, feature_target.shape[-1] // 16]
-    feature_pred_down = F.interpolate(feature_pred, size=resize_shape, mode="bilinear")
-    feature_target_down = F.interpolate(feature_target, size=resize_shape, mode="bilinear")
-    
-    feature_target_down = feature_target_down.reshape(B, C, -1)
-    depth_affinity = torch.bmm(feature_target_down.permute(0, 2, 1), feature_target_down)
-    feature_pred_down = feature_pred_down.reshape(B, C, -1)
-    rgb_affinity = torch.bmm(feature_pred_down.permute(0, 2, 1), feature_pred_down)
-    
-    loss = F.l1_loss(rgb_affinity, depth_affinity, reduction='mean') / B
+
+    assert weights.shape == loss.shape[:-1]
+    weights = weights.unsqueeze(-1)
+    assert len(loss.shape) == len(weights.shape)
+    loss = loss * weights
     return loss
 
-def compute_local_affinity_loss(feature_pred, feature_target):
-    local_shape = [feature_target.shape[-2] // 16, feature_target.shape[-1] // 16]
-    feature_target = feature_target.detach()
-    B, _, H, W = feature_pred.shape
+def compute_feature_loss(features_preds, features_targets, mask):
+    # features_preds [B, C, H, W]
+    # features_targets [B, C, H, W]
+    # mask [B, H, W]
+    feature_target = features_targets.detach()
+    feature_pred = features_preds
+    feature_pred = feature_pred.permute(0, *range(2, len(feature_pred.shape)), 1)  # [B, H*W, C]
+    feature_target = feature_target.permute(0, *range(2, len(feature_target.shape)), 1) # [B, H*W, C]
+    batch_size = int(feature_pred.shape[0])
+    positives = feature_pred.new_ones(*feature_pred.shape[:3]) # [B, H*W]
+    positives = positives * torch.any(feature_target != 0, dim=-1).float()
+    positives = positives * mask.cuda() # [B, H, W]
+    reg_weights = positives.float()
+    pos_normalizer = positives.sum().float()
+    reg_weights /= pos_normalizer
+    pos_inds = reg_weights > 0
     
-    feature_pred_q = rearrange(feature_pred, 'b c (h p1) (w p2) -> (b h w) (p1 p2) c', p1=local_shape[0], p2=local_shape[1])
-    feature_pred_k = rearrange(feature_pred, 'b c (h p1) (w p2) -> (b h w) (p1 p2) c', p1=local_shape[0], p2=local_shape[1])
-    rgb_affinity = einsum('b i d, b j d -> b i j', feature_pred_q, feature_pred_k)
-    feature_target_q = rearrange(feature_target, 'b c (h p1) (w p2) -> (b h w) (p1 p2) c', p1=local_shape[0], p2=local_shape[1])
-    feature_target_k = rearrange(feature_target, 'b c (h p1) (w p2) -> (b h w) (p1 p2) c', p1=local_shape[0], p2=local_shape[1])
-    depth_affinity = einsum('b i d, b j d -> b i j', feature_target_q, feature_target_k)
-
-    loss = F.l1_loss(rgb_affinity, depth_affinity, reduction='mean') / B
-    return loss
-
+    pos_feature_preds = feature_pred[pos_inds]
+    pos_feature_targets = feature_target[pos_inds]
+    imitation_loss_src = compute_imitation_loss(pos_feature_preds,
+                                                pos_feature_targets,
+                                                weights=reg_weights[pos_inds])  # [N, M]
+    imitation_loss = imitation_loss_src.mean(-1)
+    imitation_loss = imitation_loss.sum() / batch_size
+    return imitation_loss
+    
 @NECKS.register_module()
 class SelfTraining(nn.Module):
     def __init__(self,                 
@@ -95,15 +84,13 @@ class SelfTraining(nn.Module):
         
         bbox_mask = self.get_bbox_mask(gt_boxes)
         bbox_mask = torch.from_numpy(bbox_mask).to(device=feature_map.device)
-        weights = bbox_mask.float()
+        bbox_mask = bbox_mask.float()
 
         # feature level
         ref_feature_map_1, ref_feature_map_2 = feature_map_warped[:feature_map_warped.shape[0]//2], feature_map_warped[feature_map_warped.shape[0]//2:]
         x1, x2, x3 = src_feature_map, ref_feature_map_1, ref_feature_map_2
-        feature_imitation_loss = compute_imitation_loss(x2, x1, weights) / 2 + compute_imitation_loss(x3, x1, weights) / 2
-        feature_affinity_loss = compute_resize_affinity_loss(x2, x1) / 2 + compute_resize_affinity_loss(x3, x1) / 2
-        print(feature_affinity_loss + feature_imitation_loss)
-        return feature_imitation_loss + feature_affinity_loss
+        feature_imitation_loss = compute_feature_loss(x2, x1, bbox_mask) / 2 + compute_feature_loss(x3, x1, bbox_mask) / 2
+        return feature_imitation_loss
     
     def point2bevpixel(self, points):
         pixels_w = (points[:, 0] - self.pc_range[0]) / self.grid_length[0]  # xs
