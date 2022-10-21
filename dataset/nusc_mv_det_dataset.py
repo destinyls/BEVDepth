@@ -468,7 +468,7 @@ class NuscMVDetDataset(Dataset):
                     cam_info[cam]['calibrated_sensor']['camera_intrinsic'])
                 sweepego2sweepsensor = sweepsensor2sweepego.inverse()
                 
-                if self.is_train:
+                if self.is_train and False:
                     intrin_mat, sweepego2sweepsensor, ratio, roll, transform_pitch = self.sample_intrin_extrin_augmentation(intrin_mat, sweepego2sweepsensor)
                     img = img_intrin_extrin_transform(img, ratio, roll, transform_pitch, intrin_mat.numpy())
                 denorm = get_denorm(sweepego2sweepsensor.numpy())
