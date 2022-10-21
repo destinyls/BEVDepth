@@ -34,8 +34,8 @@ backbone_conf = {
     'x_bound': [-51.2, 51.2, 0.8],
     'y_bound': [-51.2, 51.2, 0.8],
     'z_bound': [-5, 3, 8],
-    # 'd_bound': [-3.0, 5.0, 0.05],
-    'd_bound': [-7.0, 7.0, 200],
+    'd_bound': [2.0, 58.0, 0.5],
+    'h_bound': [-7.0, 7.0, 210],
     'final_dim':
     final_dim,
     'output_channels':
@@ -65,7 +65,7 @@ ida_aug_conf = {
     'resize_lim': (0.386, 0.55),
     'final_dim':
     final_dim,
-    'rot_lim': (-5.4, 5.4),
+    'rot_lim': (-0.0, 0.0),
     'H':
     H,
     'W':
@@ -90,7 +90,7 @@ bda_aug_conf = {
 
 bev_backbone = dict(
     type='ResNet',
-    in_channels=80,
+    in_channels=160,
     depth=18,
     num_stages=3,
     strides=(1, 2, 2),
@@ -101,7 +101,7 @@ bev_backbone = dict(
 )
 
 bev_neck = dict(type='SECONDFPN',
-                in_channels=[80, 160, 320, 640],
+                in_channels=[160, 160, 320, 640],
                 upsample_strides=[1, 2, 4, 8],
                 out_channels=[64, 64, 64, 64])
 
@@ -221,18 +221,20 @@ class BEVDepthLightningModel(LightningModule):
                                             output_dir=self.default_root_dir)
         self.model = BEVDepth(self.backbone_conf,
                               self.head_conf,
-                              is_train_depth=False)
+                              is_train_depth=True)
         self.mode = 'valid'
         self.img_conf = img_conf
         self.data_use_cbgs = False
         self.num_sweeps = 1
         self.sweep_idxes = list()
         self.key_idxes = list()
-        self.data_return_depth = False
+        self.data_return_depth = True
         self.downsample_factor = self.backbone_conf['downsample_factor']
         self.dbound = self.backbone_conf['d_bound']
+        self.hbound = self.backbone_conf['h_bound']
         self.depth_channels = int(
             (self.dbound[1] - self.dbound[0]) / self.dbound[2])
+        self.height_channels = int(self.hbound[2])
 
     def forward(self, sweep_imgs, mats):
         return self.model(sweep_imgs, mats)

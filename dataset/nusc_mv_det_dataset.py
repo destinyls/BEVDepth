@@ -514,7 +514,7 @@ class NuscMVDetDataset(Dataset):
                 if self.return_depth and sweep_idx == 0:
                     file_name = os.path.split(cam_info[cam]['filename'])[-1]
                     point_depth = np.fromfile(os.path.join(
-                        self.data_root, 'height_gt', f'{file_name}.bin'),
+                        self.data_root, 'depth_gt', f'{file_name}.bin'),
                                               dtype=np.float32,
                                               count=-1).reshape(-1, 3)
                     point_depth_augmented = depth_transform(
