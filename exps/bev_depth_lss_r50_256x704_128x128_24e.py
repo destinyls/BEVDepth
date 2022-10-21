@@ -22,6 +22,7 @@ from dataset.nusc_mv_det_dataset import NuscMVDetDataset, collate_fn
 from evaluators.det_mv_evaluators import DetMVNuscEvaluator
 from models.bev_depth import BEVDepth
 from utils.torch_dist import all_gather_object, get_rank, synchronize
+from utils.backup_files import backup_codebase
 
 H = 900
 W = 1600
@@ -495,6 +496,8 @@ def run_cli():
         default_root_dir='./outputs/bev_depth_lss_r50_256x704_128x128_24e')
     args = parser.parse_args()
     main(args)
-
+    
 if __name__ == '__main__':
+    backup_codebase()
     run_cli()
+    
