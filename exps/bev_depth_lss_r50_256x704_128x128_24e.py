@@ -91,7 +91,7 @@ bda_aug_conf = {
 
 bev_backbone = dict(
     type='ResNet',
-    in_channels=160,
+    in_channels=80,
     depth=18,
     num_stages=3,
     strides=(1, 2, 2),
@@ -102,7 +102,7 @@ bev_backbone = dict(
 )
 
 bev_neck = dict(type='SECONDFPN',
-                in_channels=[160, 160, 320, 640],
+                in_channels=[80, 160, 320, 640],
                 upsample_strides=[1, 2, 4, 8],
                 out_channels=[64, 64, 64, 64])
 

@@ -582,8 +582,8 @@ class LSSFPN(nn.Module):
                                     self.voxel_num.cuda())
         feature_map_height = voxel_pooling(geom_xyz_height, img_feat_with_height.contiguous(),
                                     self.voxel_num.cuda())        
-        feature_map = torch.cat([feature_map_depth, feature_map_height], dim=1)
-        # feature_map = feature_map_depth + feature_map_height
+        # feature_map = torch.cat([feature_map_depth, feature_map_height], dim=1)
+        feature_map = feature_map_depth + feature_map_height
         if is_return_depth:
             return feature_map.contiguous(), depth
         return feature_map.contiguous()
