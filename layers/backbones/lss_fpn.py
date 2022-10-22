@@ -15,6 +15,23 @@ from ops.voxel_pooling import voxel_pooling
 
 __all__ = ['LSSFPN']
 
+class DoubleConv(nn.Module):
+    """(convolution => [BN] => ReLU) * 2"""
+    def __init__(self, in_channels, out_channels, mid_channels=None):
+        super().__init__()
+        if not mid_channels:
+            mid_channels = out_channels
+        self.double_conv = nn.Sequential(
+            nn.Conv2d(in_channels, mid_channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(mid_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(mid_channels, out_channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True)
+        )
+
+    def forward(self, x):
+        return self.double_conv(x)
 
 class BasicBlockUp(nn.Module):
     def __init__(self, in_channels, out_channels, bilinear=True):
@@ -22,10 +39,10 @@ class BasicBlockUp(nn.Module):
         # if bilinear, use the normal convolutions to reduce the number of channels
         if bilinear:
             self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-            self.conv = BasicBlock(in_channels, out_channels)
+            self.conv = DoubleConv(in_channels, out_channels, in_channels // 2)
         else:
             self.up = nn.ConvTranspose2d(in_channels, in_channels // 2, kernel_size=2, stride=2)
-            self.conv = BasicBlock(in_channels, out_channels)
+            self.conv = DoubleConv(in_channels, out_channels)
 
     def forward(self, x):
         x = self.up(x)
@@ -206,6 +223,8 @@ class DepthNet(nn.Module):
         self.context_se = SELayer(mid_channels)  # NOTE: add camera-aware
         self.depth_conv = nn.Sequential(
             BasicBlock(mid_channels, mid_channels),
+            BasicBlock(mid_channels, mid_channels),
+            BasicBlock(mid_channels, mid_channels),
             ASPP(mid_channels, mid_channels),
             build_conv_layer(cfg=dict(
                 type='DCN',
@@ -216,6 +235,7 @@ class DepthNet(nn.Module):
                 groups=4,
                 im2col_step=128,
             )),
+            BasicBlockUp(mid_channels, mid_channels),
             BasicBlockUp(mid_channels, mid_channels),
             BasicBlockUp(mid_channels, mid_channels),
             nn.Conv2d(mid_channels,
@@ -349,9 +369,11 @@ class LSSFPN(nn.Module):
         ogfH, ogfW = self.final_dim
         fH, fW = ogfH // self.downsample_factor, ogfW // self.downsample_factor
         # depth
+        '''
         d_coords = torch.arange(*self.d_bound,
                                 dtype=torch.float).view(-1, 1,
                                                         1).expand(-1, fH, fW)
+        '''
         # height SID style
         '''
         range_num1 = int(self.d_bound[2] * abs(self.d_bound[0]) / (self.d_bound[1] - self.d_bound[0]))
@@ -364,8 +386,8 @@ class LSSFPN(nn.Module):
         d_coords = np.concatenate([d_coords1, d_coords2], axis=0)
         d_coords = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
         '''
+        
         # height LID style
-        '''
         min_height, min_num = 0.5, 40
         lid_num = self.d_bound[2] - 2 * min_num
         range_num1 = int(lid_num * abs(self.d_bound[0]) / (self.d_bound[1] - self.d_bound[0]))
@@ -386,7 +408,7 @@ class LSSFPN(nn.Module):
         mid_coords1[-1], mid_coords2[0] = mid_coords1[-2] / 2, mid_coords2[1] / 2
         d_coords = np.concatenate([d_coords1, mid_coords1, mid_coords2, d_coords2], axis=0)
         d_coords = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
-        '''
+
         D, _, _ = d_coords.shape
         x_coords = torch.linspace(0, ogfW - 1, fW, dtype=torch.float).view(
             1, 1, fW).expand(D, fH, fW)

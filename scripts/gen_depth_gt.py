@@ -134,6 +134,7 @@ if __name__ == '__main__':
     infos = mmcv.load(info_path)
     # import ipdb; ipdb.set_trace()
     for info in tqdm(infos):
-        po.apply_async(func=worker, args=(info, ))
+        worker(info)
+        # po.apply_async(func=worker, args=(info, ))
     po.close()
     po.join()
