@@ -24,19 +24,56 @@ from models.bev_depth import BEVDepth
 from utils.torch_dist import all_gather_object, get_rank, synchronize
 from utils.backup_files import backup_codebase
 
-H = 900
-W = 1600
-final_dim = (256, 704)
+is_nuscenes = False
+
+if is_nuscenes:
+    H = 900
+    W = 1600
+    final_dim = (256, 704)
+    x_bound = [-51.2, 51.2, 0.8]
+    y_bound = [-51.2, 51.2, 0.8]
+    z_bound = [-5, 3, 8]
+    d_bound = [-7.0, 7.0, 200]
+    cams = ['CAM_FRONT_LEFT', 'CAM_FRONT', 'CAM_FRONT_RIGHT', 'CAM_BACK_LEFT', 'CAM_BACK', 'CAM_BACK_RIGHT']
+    Ncams = 6
+    data_root = 'data/nuScenes'
+    train_info_path = 'data/nuScenes/nuscenes_12hz_infos_train.pkl'
+    val_info_path = 'data/nuScenes/nuscenes_12hz_infos_val.pkl'
+    max_epochs, every_n_epochs = 48, 6
+    precision = 16
+    post_center_range = [-61.2, -61.2, -10.0, 61.2, 61.2, 10.0]
+    post_center_limit_range = [-61.2, -61.2, -10.0, 61.2, 61.2, 10.0]
+    point_cloud_range = [-51.2, -51.2, -5, 51.2, 51.2, 3]
+    is_train_depth = False
+else:
+    H = 1080
+    W = 1920
+    final_dim = (864, 1536)
+    x_bound = [0, 102.4, 0.8]
+    y_bound = [-51.2, 51.2, 0.8]
+    z_bound = [-5, 3, 8]
+    d_bound = [2.5, 10.5, 80]
+    cams = ['CAM_FRONT']
+    Ncams = 1
+    data_root = 'data/dair-v2x'
+    train_info_path = 'data/dair-v2x/dair_12hz_infos_train.pkl'
+    val_info_path = 'data/dair-v2x/dair_12hz_infos_val.pkl'
+    max_epochs, every_n_epochs = 200, 10
+    precision = 32
+    post_center_range = [0.0, -61.2, -10.0, 122.4, 61.2, 10.0]
+    post_center_limit_range = [0.0, -61.2, -10.0, 122.4, 61.2, 10.0]
+    point_cloud_range = [0, -51.2, -5, 102.4, 51.2, 3]
+    is_train_depth = False
+    
 img_conf = dict(img_mean=[123.675, 116.28, 103.53],
                 img_std=[58.395, 57.12, 57.375],
                 to_rgb=True)
 
 backbone_conf = {
-    'x_bound': [-51.2, 51.2, 0.8],
-    'y_bound': [-51.2, 51.2, 0.8],
-    'z_bound': [-5, 3, 8],
-    # 'd_bound': [-3.0, 5.0, 0.05],
-    'd_bound': [-7.0, 7.0, 200],
+    'x_bound': x_bound,
+    'y_bound': y_bound,
+    'z_bound': z_bound,
+    'd_bound': d_bound,
     'final_dim':
     final_dim,
     'output_channels':
@@ -74,12 +111,8 @@ ida_aug_conf = {
     'rand_flip':
     True,
     'bot_pct_lim': (0.0, 0.0),
-    'cams': [
-        'CAM_FRONT_LEFT', 'CAM_FRONT', 'CAM_FRONT_RIGHT', 'CAM_BACK_LEFT',
-        'CAM_BACK', 'CAM_BACK_RIGHT'
-    ],
-    'Ncams':
-    6,
+    'cams': cams,
+    'Ncams': Ncams
 }
 
 bda_aug_conf = {
@@ -136,17 +169,17 @@ common_heads = dict(reg=(2, 2),
 
 bbox_coder = dict(
     type='CenterPointBBoxCoder',
-    post_center_range=[-61.2, -61.2, -10.0, 61.2, 61.2, 10.0],
+    post_center_range=post_center_range,
     max_num=500,
     score_threshold=0.1,
     out_size_factor=4,
     voxel_size=[0.2, 0.2, 8],
-    pc_range=[-51.2, -51.2, -5, 51.2, 51.2, 3],
+    pc_range=point_cloud_range,
     code_size=9,
 )
 
 train_cfg = dict(
-    point_cloud_range=[-51.2, -51.2, -5, 51.2, 51.2, 3],
+    point_cloud_range=point_cloud_range,
     grid_size=[512, 512, 1],
     voxel_size=[0.2, 0.2, 8],
     out_size_factor=4,
@@ -158,7 +191,7 @@ train_cfg = dict(
 )
 
 test_cfg = dict(
-    post_center_limit_range=[-61.2, -61.2, -10.0, 61.2, 61.2, 10.0],
+    post_center_limit_range=post_center_limit_range,
     max_per_img=500,
     max_pool_nms=False,
     min_radius=[4, 12, 10, 1, 0.85, 0.175],
@@ -194,7 +227,7 @@ class BEVDepthLightningModel(LightningModule):
 
     def __init__(self,
                  gpus: int = 1,
-                 data_root='data/nuScenes',
+                 data_root=data_root,
                  eval_interval=1,
                  batch_size_per_device=8,
                  class_names=CLASSES,
@@ -395,7 +428,7 @@ class BEVDepthLightningModel(LightningModule):
             bda_aug_conf=self.bda_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path='data/nuScenes/nuscenes_12hz_infos_train.pkl',
+            info_path=train_info_path,
             is_train=True,
             use_cbgs=self.data_use_cbgs,
             img_conf=self.img_conf,
@@ -424,7 +457,7 @@ class BEVDepthLightningModel(LightningModule):
             bda_aug_conf=self.bda_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path='data/nuScenes/nuscenes_12hz_infos_val.pkl',
+            info_path=train_info_path,
             is_train=False,
             img_conf=self.img_conf,
             num_sweeps=self.num_sweeps,
@@ -486,13 +519,13 @@ def run_cli():
     parser.set_defaults(
         profiler='simple',
         deterministic=False,
-        max_epochs=48,
+        max_epochs=max_epochs,
         accelerator='ddp',
         num_sanity_val_steps=0,
         gradient_clip_val=5,
         limit_val_batches=0,
         enable_checkpointing=True,
-        precision=16,
+        precision=precision,
         default_root_dir='./outputs/bev_depth_lss_r50_256x704_128x128_24e')
     args = parser.parse_args()
     main(args)

@@ -435,14 +435,15 @@ class NuscMVDetDataset(Dataset):
                 rotate_ida = self.sample_ida_augmentation(
                     )
             for sweep_idx, cam_info in enumerate(cam_infos):
-
                 img = Image.open(
                     os.path.join(self.data_root, cam_info[cam]['filename']))
-                # img = Image.fromarray(img)
-                w, x, y, z = cam_info[cam]['calibrated_sensor']['rotation']
-                # sweep sensor to sweep ego
-                sweepsensor2sweepego_rot = torch.Tensor(
-                    Quaternion(w, x, y, z).rotation_matrix)
+                if "rotation_matrix" in cam_info[cam]['calibrated_sensor'].keys():
+                    sweepsensor2sweepego_rot = torch.Tensor(cam_info[cam]['calibrated_sensor']['rotation_matrix'])
+                else:
+                    w, x, y, z = cam_info[cam]['calibrated_sensor']['rotation']
+                    # sweep sensor to sweep ego
+                    sweepsensor2sweepego_rot = torch.Tensor(
+                        Quaternion(w, x, y, z).rotation_matrix)
                 sweepsensor2sweepego_tran = torch.Tensor(
                     cam_info[cam]['calibrated_sensor']['translation'])
                 sweepsensor2sweepego = sweepsensor2sweepego_rot.new_zeros(
@@ -487,9 +488,13 @@ class NuscMVDetDataset(Dataset):
                 global2keyego = keyego2global.inverse()
 
                 # cur ego to sensor
-                w, x, y, z = key_info[cam]['calibrated_sensor']['rotation']
-                keysensor2keyego_rot = torch.Tensor(
-                    Quaternion(w, x, y, z).rotation_matrix)
+                if "rotation_matrix" in key_info[cam]['calibrated_sensor'].keys():
+                    keysensor2keyego_rot = torch.Tensor(key_info[cam]['calibrated_sensor']['rotation_matrix'])
+                else:
+                    w, x, y, z = key_info[cam]['calibrated_sensor']['rotation']
+                    # sweep sensor to sweep ego
+                    keysensor2keyego_rot = torch.Tensor(
+                        Quaternion(w, x, y, z).rotation_matrix)
                 keysensor2keyego_tran = torch.Tensor(
                     key_info[cam]['calibrated_sensor']['translation'])
                 keysensor2keyego = keysensor2keyego_rot.new_zeros((4, 4))
