@@ -39,10 +39,10 @@ class BasicBlockUp(nn.Module):
         # if bilinear, use the normal convolutions to reduce the number of channels
         if bilinear:
             self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-            self.conv = DoubleConv(in_channels, out_channels, in_channels // 2)
+            self.conv = BasicBlock(in_channels, out_channels)
         else:
             self.up = nn.ConvTranspose2d(in_channels, in_channels // 2, kernel_size=2, stride=2)
-            self.conv = DoubleConv(in_channels, out_channels)
+            self.conv = BasicBlock(in_channels, out_channels)
 
     def forward(self, x):
         x = self.up(x)
@@ -200,7 +200,7 @@ class DepthNet(nn.Module):
         super(DepthNet, self).__init__()
         self.downsample_factor = downsample_factor
         self.final_dim = final_dim
-        self.register_buffer('grid_samples', self.create_grid_samples())
+        # self.register_buffer('grid_samples', self.create_grid_samples())
         
         self.reduce_conv = nn.Sequential(
             nn.Conv2d(in_channels,
@@ -223,8 +223,6 @@ class DepthNet(nn.Module):
         self.context_se = SELayer(mid_channels)  # NOTE: add camera-aware
         self.depth_conv = nn.Sequential(
             BasicBlock(mid_channels, mid_channels),
-            BasicBlock(mid_channels, mid_channels),
-            BasicBlock(mid_channels, mid_channels),
             ASPP(mid_channels, mid_channels),
             build_conv_layer(cfg=dict(
                 type='DCN',
@@ -235,7 +233,6 @@ class DepthNet(nn.Module):
                 groups=4,
                 im2col_step=128,
             )),
-            BasicBlockUp(mid_channels, mid_channels),
             BasicBlockUp(mid_channels, mid_channels),
             BasicBlockUp(mid_channels, mid_channels),
             nn.Conv2d(mid_channels,
@@ -298,11 +295,11 @@ class DepthNet(nn.Module):
         depth_se = self.depth_mlp(mlp_input)[..., None, None]
         depth = self.depth_se(x, depth_se)
         depth = self.depth_conv(depth)
-        
-        batch = depth.shape[0]
-        sampled_depth = F.grid_sample(depth, self.grid_samples.unsqueeze(0).repeat(batch, 1, 1, 1), mode='bilinear', padding_mode='zeros')        
-        return torch.cat([sampled_depth, context], dim=1), depth
 
+        # sampled_depth = F.grid_sample(depth, self.grid_samples.unsqueeze(0).repeat(batch, 1, 1, 1), mode='bilinear', padding_mode='zeros')        
+        _, _, H, W = depth.shape
+        sampled_depth = depth[:, :, 0:H:4, 0:W:4]
+        return torch.cat([sampled_depth, context], dim=1), depth
 
 class LSSFPN(nn.Module):
     def __init__(self, x_bound, y_bound, z_bound, d_bound, final_dim,
@@ -369,9 +366,11 @@ class LSSFPN(nn.Module):
         ogfH, ogfW = self.final_dim
         fH, fW = ogfH // self.downsample_factor, ogfW // self.downsample_factor
         # depth
+        '''
         d_coords = torch.arange(*self.d_bound,
                                 dtype=torch.float).view(-1, 1,
                                                         1).expand(-1, fH, fW)
+        '''
         # height SID style
         '''
         range_num1 = int(self.d_bound[2] * abs(self.d_bound[0]) / (self.d_bound[1] - self.d_bound[0]))
@@ -384,9 +383,7 @@ class LSSFPN(nn.Module):
         d_coords = np.concatenate([d_coords1, d_coords2], axis=0)
         d_coords = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
         '''
-        
         # height LID style
-        '''
         min_height, min_num = 0.5, 40
         lid_num = self.d_bound[2] - 2 * min_num
         range_num1 = int(lid_num * abs(self.d_bound[0]) / (self.d_bound[1] - self.d_bound[0]))
@@ -407,7 +404,7 @@ class LSSFPN(nn.Module):
         mid_coords1[-1], mid_coords2[0] = mid_coords1[-2] / 2, mid_coords2[1] / 2
         d_coords = np.concatenate([d_coords1, mid_coords1, mid_coords2, d_coords2], axis=0)
         d_coords = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
-        '''
+        
         D, _, _ = d_coords.shape
         x_coords = torch.linspace(0, ogfW - 1, fW, dtype=torch.float).view(
             1, 1, fW).expand(D, fH, fW)
