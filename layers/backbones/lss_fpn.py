@@ -334,11 +334,14 @@ class LSSFPN(nn.Module):
         # make grid in image plane
         ogfH, ogfW = self.final_dim
         fH, fW = ogfH // self.downsample_factor, ogfW // self.downsample_factor
+        
         # height SID style
+        d_coords = np.arange(self.d_bound[2]) / self.d_bound[2] * (math.log(self.d_bound[1]) - math.log(self.d_bound[0]))
+        d_coords = np.exp(d_coords + math.log(self.d_bound[0]))
+        d_coords = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
         '''
         range_num1 = int(self.d_bound[2] * abs(self.d_bound[0]) / (self.d_bound[1] - self.d_bound[0]))
         range_num2 = self.d_bound[2] - range_num1
-        
         d_coords1 = np.arange(range_num1) / range_num1 * (math.log(abs(self.d_bound[0])) - math.log(1e-3))
         d_coords1 = -1 * np.flipud(np.exp(d_coords1 + math.log(1e-3)))
         d_coords2 = np.arange(range_num2) / range_num2 * (math.log(abs(self.d_bound[1])) - math.log(1e-3))
@@ -347,6 +350,7 @@ class LSSFPN(nn.Module):
         d_coords = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
         '''
         # height LID style
+        '''
         min_height, min_num = 0.5, 40
         lid_num = self.h_bound[2] - 2 * min_num
         range_num1 = int(lid_num * abs(self.h_bound[0]) / (self.h_bound[1] - self.h_bound[0]))
@@ -367,7 +371,7 @@ class LSSFPN(nn.Module):
         mid_coords1[-1], mid_coords2[0] = mid_coords1[-2] / 2, mid_coords2[1] / 2
         d_coords = np.concatenate([d_coords1, mid_coords1, mid_coords2, d_coords2], axis=0)
         d_coords = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
-
+        '''
         D, _, _ = d_coords.shape
         x_coords = torch.linspace(0, ogfW - 1, fW, dtype=torch.float).view(
             1, 1, fW).expand(D, fH, fW)
@@ -575,6 +579,7 @@ class LSSFPN(nn.Module):
         
         geom_xyz_depth = ((geom_xyz_depth - (self.voxel_coord - self.voxel_size / 2.0)) /
                     self.voxel_size).int()
+        
         geom_xyz_height = ((geom_xyz_height - (self.voxel_coord - self.voxel_size / 2.0)) /
                     self.voxel_size).int()
         

@@ -36,7 +36,7 @@ backbone_conf = {
     'y_bound': [-51.2, 51.2, 0.8],
     'z_bound': [-5, 3, 8],
     'd_bound': [2.0, 58.0, 0.5],
-    'h_bound': [-7.0, 7.0, 210],
+    'h_bound': [1.0, 7.0, 150],
     'final_dim':
     final_dim,
     'output_channels':
@@ -222,14 +222,14 @@ class BEVDepthLightningModel(LightningModule):
                                             output_dir=self.default_root_dir)
         self.model = BEVDepth(self.backbone_conf,
                               self.head_conf,
-                              is_train_depth=True)
+                              is_train_depth=False)
         self.mode = 'valid'
         self.img_conf = img_conf
         self.data_use_cbgs = False
         self.num_sweeps = 1
         self.sweep_idxes = list()
         self.key_idxes = list()
-        self.data_return_depth = True
+        self.data_return_depth = False
         self.downsample_factor = self.backbone_conf['downsample_factor']
         self.dbound = self.backbone_conf['d_bound']
         self.hbound = self.backbone_conf['h_bound']
