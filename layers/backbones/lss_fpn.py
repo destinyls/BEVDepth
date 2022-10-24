@@ -384,6 +384,7 @@ class LSSFPN(nn.Module):
         d_coords = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
         '''
         # height LID style
+        '''
         min_height, min_num = 0.5, 40
         lid_num = self.d_bound[2] - 2 * min_num
         range_num1 = int(lid_num * abs(self.d_bound[0]) / (self.d_bound[1] - self.d_bound[0]))
@@ -404,7 +405,31 @@ class LSSFPN(nn.Module):
         mid_coords1[-1], mid_coords2[0] = mid_coords1[-2] / 2, mid_coords2[1] / 2
         d_coords = np.concatenate([d_coords1, mid_coords1, mid_coords2, d_coords2], axis=0)
         d_coords = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
-        
+        '''
+        # PID
+        alpha = 2
+        if self.d_bound[0] < 0:
+            range_num1 = int(self.d_bound[2] * abs(self.d_bound[0]) / (self.d_bound[1] - self.d_bound[0]))
+            range_num2 = self.d_bound[2] - range_num1
+            
+            d_min1, d_max1 = 0.01, abs(self.d_bound[0])
+            delta1 = np.arange(1, range_num1 + 1, 1) / range_num1
+            delta1 = np.power(delta1, alpha) 
+            d_coords1 = -1 * np.flipud(d_min1 + delta1 * (d_max1 - d_min1))
+            
+            d_min2, d_max2 = 0.01, self.d_bound[1]
+            delta2 = np.arange(0, range_num2, 1) / range_num2
+            delta2 = np.power(delta2, alpha) 
+            d_coords2 = d_min2 + delta2 * (d_max2 - d_min2)
+            d_coords = np.concatenate([d_coords1, d_coords2], axis=0)
+            d_coords = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
+        else:
+            d_min, d_max, bins_num = self.d_bound[0], self.d_bound[1], self.d_bound[2]
+            delta = np.arange(0, bins_num, 1) / bins_num
+            delta = np.power(delta, alpha) 
+            d_coords = d_min + delta * (d_max - d_min)
+            d_coords = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
+            
         D, _, _ = d_coords.shape
         x_coords = torch.linspace(0, ogfW - 1, fW, dtype=torch.float).view(
             1, 1, fW).expand(D, fH, fW)

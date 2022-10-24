@@ -221,18 +221,19 @@ class BEVDepthLightningModel(LightningModule):
                                             output_dir=self.default_root_dir)
         self.model = BEVDepth(self.backbone_conf,
                               self.head_conf,
-                              is_train_depth=False)
+                              is_train_depth=True)
         self.mode = 'valid'
         self.img_conf = img_conf
         self.data_use_cbgs = False
         self.num_sweeps = 1
         self.sweep_idxes = list()
         self.key_idxes = list()
-        self.data_return_depth = False
-        self.downsample_factor = self.backbone_conf['downsample_factor'] // 8
+        self.data_return_depth = True
+        self.downsample_factor = self.backbone_conf['downsample_factor'] // 4
         self.dbound = self.backbone_conf['d_bound']
-        self.depth_channels = int(
-            (self.dbound[1] - self.dbound[0]) / self.dbound[2])
+        # self.depth_channels = int(
+        #     (self.dbound[1] - self.dbound[0]) / self.dbound[2])
+        self.depth_channels = self.dbound[2]
 
     def forward(self, sweep_imgs, mats):
         return self.model(sweep_imgs, mats)
@@ -311,8 +312,33 @@ class BEVDepthLightningModel(LightningModule):
         gt_depths = torch.min(gt_depths_tmp, dim=-1).values
         gt_depths = gt_depths.view(B * N, H // self.downsample_factor,
                                    W // self.downsample_factor)
+        '''
         gt_depths = (gt_depths -
                      (self.dbound[0] - self.dbound[2])) / self.dbound[2]
+        '''
+        alpha = 2.0
+        if self.dbound[0] < 0:
+            bins_num1 = int(self.dbound[2] * abs(self.dbound[0]) / (self.dbound[1] - self.dbound[0]))
+            bins_num2 = self.dbound[2] - bins_num1
+            d_min = 0.01
+            pos_mask = (gt_depths > d_min)
+            neg_mask = (gt_depths < -1 * d_min)
+            omit_mask = (gt_depths < d_min) & (gt_depths > -1 * d_min)
+            gt_depths[omit_mask] = 1e5
+            
+            gt_depths[pos_mask] = (gt_depths[pos_mask] - d_min) / (self.dbound[1] - d_min)
+            gt_depths[pos_mask] = torch.floor(torch.pow(gt_depths[pos_mask], 1 / alpha) * bins_num2) + bins_num1
+                        
+            gt_depths[neg_mask] = torch.abs(gt_depths[neg_mask])
+            gt_depths[neg_mask] = (gt_depths[neg_mask] - d_min) / (abs(self.dbound[0]) - d_min)
+            gt_depths[neg_mask] = -1 * torch.ceil(torch.pow(gt_depths[neg_mask], 1 / alpha) * bins_num1) + bins_num1 
+            gt_depths = gt_depths + 1
+        else:
+            d_min = self.dbound[0]
+            gt_depths = (gt_depths - d_min) / (self.dbound[1] - d_min)
+            gt_depths = torch.floor(torch.pow(gt_depths, 1 / alpha) * self.dbound[2])
+            gt_depths = gt_depths + 1
+        
         gt_depths = torch.where(
             (gt_depths < self.depth_channels + 1) & (gt_depths >= 0.0),
             gt_depths, torch.zeros_like(gt_depths))
@@ -484,7 +510,7 @@ def run_cli():
     parser.set_defaults(
         profiler='simple',
         deterministic=False,
-        max_epochs=48,
+        max_epochs=36,
         accelerator='ddp',
         num_sanity_val_steps=0,
         gradient_clip_val=5,
