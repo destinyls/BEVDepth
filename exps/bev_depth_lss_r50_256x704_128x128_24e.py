@@ -32,8 +32,8 @@ img_conf = dict(img_mean=[123.675, 116.28, 103.53],
                 to_rgb=True)
 
 backbone_conf = {
-    'x_bound': [-51.2, 51.2, 0.8],
-    'y_bound': [-51.2, 51.2, 0.8],
+    'x_bound': [-76.8, 76.8, 0.8],
+    'y_bound': [-76.8, 76.8, 0.8],
     'z_bound': [-5, 3, 8],
     # 'd_bound': [-3.0, 5.0, 0.05],
     'd_bound': [-7.0, 7.0, 200],
@@ -136,17 +136,17 @@ common_heads = dict(reg=(2, 2),
 
 bbox_coder = dict(
     type='CenterPointBBoxCoder',
-    post_center_range=[-61.2, -61.2, -10.0, 61.2, 61.2, 10.0],
+    post_center_range=[-81.2, -81.2, -10.0, 81.2, 81.2, 10.0],
     max_num=500,
     score_threshold=0.1,
     out_size_factor=4,
     voxel_size=[0.2, 0.2, 8],
-    pc_range=[-51.2, -51.2, -5, 51.2, 51.2, 3],
+    pc_range=[-76.8, -76.8, -5, 76.8, 76.8, 3],
     code_size=9,
 )
 
 train_cfg = dict(
-    point_cloud_range=[-51.2, -51.2, -5, 51.2, 51.2, 3],
+    point_cloud_range=[-76.8, -76.8, -5, 76.8, 76.8, 3],
     grid_size=[512, 512, 1],
     voxel_size=[0.2, 0.2, 8],
     out_size_factor=4,
@@ -158,7 +158,7 @@ train_cfg = dict(
 )
 
 test_cfg = dict(
-    post_center_limit_range=[-61.2, -61.2, -10.0, 61.2, 61.2, 10.0],
+    post_center_limit_range=[-81.2, -81.2, -10.0, 81.2, 81.2, 10.0],
     max_per_img=500,
     max_pool_nms=False,
     min_radius=[4, 12, 10, 1, 0.85, 0.175],
@@ -486,7 +486,7 @@ def run_cli():
     parser.set_defaults(
         profiler='simple',
         deterministic=False,
-        max_epochs=48,
+        max_epochs=24,
         accelerator='ddp',
         num_sanity_val_steps=0,
         gradient_clip_val=5,
