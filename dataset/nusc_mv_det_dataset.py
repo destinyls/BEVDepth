@@ -11,6 +11,8 @@ from PIL import Image
 from pyquaternion import Quaternion
 from torch.utils.data import Dataset
 
+from dataset.image_rectify import ImageRectify, ProduceHeightMap
+
 __all__ = ['NuscMVDetDataset']
 
 map_name_from_general_to_detection = {
@@ -269,9 +271,16 @@ class NuscMVDetDataset(Dataset):
             'All `key_idxes` must less than 0.'
         self.key_idxes = [0] + key_idxes
 
-        self.ratio_range = [1.0, 1.0]
-        self.roll_range = [-0.0, 0.0]
-        self.pitch_range = [-0.0, 0.0]
+        self.ratio_range = [1.0, 0.05]
+        self.roll_range = [0.0, 1.0]
+        self.pitch_range = [0.0, 1.0]
+        self.image_rectify = ImageRectify(image_shape=[self.ida_aug_conf['H'],self.ida_aug_conf['W']],
+                                          roll_range=self.roll_range,
+                                          pitch_range=self.pitch_range,
+                                          ratio=self.ratio_range)
+        self.visual_tool = ProduceHeightMap(resolution=0.1)
+        self.is_nuscenes = True if "nuscenes" in info_path else False
+
 
     def _get_sample_indices(self):
         """Load annotations from ann_file.
@@ -311,12 +320,14 @@ class NuscMVDetDataset(Dataset):
     def sample_intrin_extrin_augmentation(self, intrin_mat, sweepego2sweepsensor):
         intrin_mat, sweepego2sweepsensor = intrin_mat.numpy(), sweepego2sweepsensor.numpy()
         # rectify intrin_mat
-        ratio = np.random.uniform(self.ratio_range[0], self.ratio_range[1])
+        ratio = np.random.normal(self.ratio_range[0], self.ratio_range[1])
+        ratio = 0.85
         intrin_mat_rectify = intrin_mat.copy()
         intrin_mat_rectify[:2,:2] = intrin_mat[:2,:2] * ratio
         
         # rectify sweepego2sweepsensor by roll
-        roll = np.random.uniform(self.roll_range[0], self.roll_range[1])
+        roll = np.random.normal(self.roll_range[0], self.roll_range[1])
+        roll = 0.0
         roll_rad = self.degree2rad(roll)
         rectify_roll = np.array([[math.cos(roll_rad), -math.sin(roll_rad), 0, 0], 
                                  [math.sin(roll_rad), math.cos(roll_rad), 0, 0], 
@@ -325,7 +336,8 @@ class NuscMVDetDataset(Dataset):
         sweepego2sweepsensor_rectify_roll = np.matmul(rectify_roll, sweepego2sweepsensor)
         
         # rectify sweepego2sweepsensor by pitch
-        pitch = np.random.uniform(self.pitch_range[0], self.pitch_range[1])
+        pitch = np.random.normal(self.pitch_range[0], self.pitch_range[1])
+        pitch = 0.0
         pitch_rad = self.degree2rad(pitch)
         rectify_pitch = np.array([[1, 0, 0, 0],
                                   [0,math.cos(pitch_rad), -math.sin(pitch_rad), 0], 
@@ -352,11 +364,11 @@ class NuscMVDetDataset(Dataset):
         M = np.matmul(M, K_inv)
         return M
 
-    def sample_ida_augmentation(self):
+    def sample_ida_augmentation(self, is_nuscenes):
         """Generate ida augmentation values based on ida_config."""
         H, W = self.ida_aug_conf['H'], self.ida_aug_conf['W']
         fH, fW = self.ida_aug_conf['final_dim']
-        if self.is_train:
+        if self.is_train and not is_nuscenes:
             resize = max(fH / H, fW / W)
             resize_dims = (int(W * resize), int(H * resize))
             newW, newH = resize_dims
@@ -380,9 +392,9 @@ class NuscMVDetDataset(Dataset):
             rotate_ida = 0
         return resize, resize_dims, crop, flip, rotate_ida
 
-    def sample_bda_augmentation(self):
+    def sample_bda_augmentation(self, is_nuscenes):
         """Generate bda augmentation values based on bda_config."""
-        if self.is_train:
+        if self.is_train and not is_nuscenes:
             rotate_bda = np.random.uniform(*self.bda_aug_conf['rot_lim'])
             scale_bda = np.random.uniform(*self.bda_aug_conf['scale_lim'])
             flip_dx = np.random.uniform() < self.bda_aug_conf['flip_dx_ratio']
@@ -432,8 +444,7 @@ class NuscMVDetDataset(Dataset):
             timestamps = list()
             key_info = cam_infos[0]
             resize, resize_dims, crop, flip, \
-                rotate_ida = self.sample_ida_augmentation(
-                    )
+                rotate_ida = self.sample_ida_augmentation(self.is_nuscenes)
             for sweep_idx, cam_info in enumerate(cam_infos):
                 img = Image.open(
                     os.path.join(self.data_root, cam_info[cam]['filename']))
@@ -469,9 +480,17 @@ class NuscMVDetDataset(Dataset):
                     cam_info[cam]['calibrated_sensor']['camera_intrinsic'])
                 sweepego2sweepsensor = sweepsensor2sweepego.inverse()
                 
-                if self.is_train and False:
+                # if self.is_train and False:
+                if True:
                     intrin_mat, sweepego2sweepsensor, ratio, roll, transform_pitch = self.sample_intrin_extrin_augmentation(intrin_mat, sweepego2sweepsensor)
                     img = img_intrin_extrin_transform(img, ratio, roll, transform_pitch, intrin_mat.numpy())
+                    '''
+                    image = cv2.cvtColor(np.asarray(img), cv2.COLOR_RGB2BGR)
+                    image, sweepego2sweepsensor, intrin_mat = self.image_rectify(image, sweepego2sweepsensor.numpy(), intrin_mat.numpy(), True, True, True)
+                    img = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+                    intrin_mat = torch.Tensor(intrin_mat)
+                    sweepego2sweepsensor = torch.Tensor(sweepego2sweepsensor)                    
+                    '''
                 denorm = get_denorm(sweepego2sweepsensor.numpy())
                 sweepsensor2sweepego = sweepego2sweepsensor.inverse()
 
@@ -690,8 +709,7 @@ class NuscMVDetDataset(Dataset):
             gt_boxes = sweep_imgs.new_zeros(0, 7)
             gt_labels = sweep_imgs.new_zeros(0, )
 
-        rotate_bda, scale_bda, flip_dx, flip_dy = self.sample_bda_augmentation(
-        )
+        rotate_bda, scale_bda, flip_dx, flip_dy = self.sample_bda_augmentation(self.is_nuscenes)
         bda_mat = sweep_imgs.new_zeros(4, 4)
         bda_mat[3, 3] = 1
         gt_boxes, bda_rot = bev_transform(gt_boxes, rotate_bda, scale_bda,

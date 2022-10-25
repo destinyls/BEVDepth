@@ -25,7 +25,6 @@ from utils.torch_dist import all_gather_object, get_rank, synchronize
 from utils.backup_files import backup_codebase
 
 is_nuscenes = False
-
 if is_nuscenes:
     H = 900
     W = 1600
@@ -45,6 +44,7 @@ if is_nuscenes:
     post_center_limit_range = [-61.2, -61.2, -10.0, 61.2, 61.2, 10.0]
     point_cloud_range = [-51.2, -51.2, -5, 51.2, 51.2, 3]
     is_train_depth = False
+    downsample_stride = 16
 else:
     H = 1080
     W = 1920
@@ -64,7 +64,8 @@ else:
     post_center_limit_range = [0.0, -61.2, -10.0, 122.4, 61.2, 10.0]
     point_cloud_range = [0, -51.2, -5, 102.4, 51.2, 3]
     is_train_depth = False
-    
+    downsample_stride = 16
+
 img_conf = dict(img_mean=[123.675, 116.28, 103.53],
                 img_std=[58.395, 57.12, 57.375],
                 to_rgb=True)
@@ -255,15 +256,15 @@ class BEVDepthLightningModel(LightningModule):
                                             output_dir=self.default_root_dir)
         self.model = BEVDepth(self.backbone_conf,
                               self.head_conf,
-                              is_train_depth=False)
+                              is_train_depth=is_train_depth)
         self.mode = 'valid'
         self.img_conf = img_conf
         self.data_use_cbgs = False
         self.num_sweeps = 1
         self.sweep_idxes = list()
         self.key_idxes = list()
-        self.data_return_depth = False
-        self.downsample_factor = self.backbone_conf['downsample_factor']
+        self.data_return_depth = is_train_depth
+        self.downsample_factor = self.backbone_conf['downsample_factor'] // downsample_stride
         self.dbound = self.backbone_conf['d_bound']
         self.depth_channels = int(
             (self.dbound[1] - self.dbound[0]) / self.dbound[2])
@@ -351,6 +352,9 @@ class BEVDepthLightningModel(LightningModule):
         gt_depths = torch.where(
             (gt_depths < self.depth_channels + 1) & (gt_depths >= 0.0),
             gt_depths, torch.zeros_like(gt_depths))
+        
+        _, H, W = gt_depths.shape
+        gt_depths = gt_depths[:, 0:H:downsample_stride, 0:W:downsample_stride]
         gt_depths = F.one_hot(gt_depths.long(),
                               num_classes=self.depth_channels + 1).view(
                                   -1, self.depth_channels + 1)[:, 1:]
@@ -411,7 +415,7 @@ class BEVDepthLightningModel(LightningModule):
         all_img_metas = sum(map(list, zip(*all_gather_object(all_img_metas))),
                             [])[:dataset_length]
         if get_rank() == 0:
-            self.evaluator.evaluate(all_pred_results, all_img_metas)
+            self.evaluator.evaluate(all_pred_results, all_img_metas, is_nuscenes)
 
     def configure_optimizers(self):
         lr = self.basic_lr_per_img * \
@@ -457,7 +461,7 @@ class BEVDepthLightningModel(LightningModule):
             bda_aug_conf=self.bda_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path=train_info_path,
+            info_path=val_info_path,
             is_train=False,
             img_conf=self.img_conf,
             num_sweeps=self.num_sweeps,

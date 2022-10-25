@@ -1,5 +1,6 @@
 '''Modified from # https://github.com/nutonomy/nuscenes-devkit/blob/57889ff20678577025326cfc24e57424a829be0a/python-sdk/nuscenes/eval/detection/evaluate.py#L222 # noqa
 '''
+import os
 import os.path as osp
 import tempfile
 
@@ -8,6 +9,8 @@ import numpy as np
 import pyquaternion
 from nuscenes.utils.data_classes import Box
 from pyquaternion import Quaternion
+
+from evaluators.result2kitti import result2kitti, kitti_evaluation
 
 __all__ = ['DetMVNuscEvaluator']
 
@@ -119,6 +122,7 @@ class DetMVNuscEvaluator():
     def format_results(self,
                        results,
                        img_metas,
+                       is_nuscenes,
                        result_names=['img_bbox'],
                        jsonfile_prefix=None,
                        **kwargs):
@@ -160,14 +164,16 @@ class DetMVNuscEvaluator():
             print(f'\nFormating bboxes of {rasult_name}')
             tmp_file_ = osp.join(jsonfile_prefix, rasult_name)
             if self.output_dir:
+                rets = self._format_bbox(results, img_metas, self.output_dir) if is_nuscenes else self._format_bbox_dair_v2x(results, img_metas, self.output_dir)
                 result_files.update({
                     rasult_name:
-                    self._format_bbox(results, img_metas, self.output_dir)
+                    rets
                 })
             else:
+                rets = self._format_bbox(results, img_metas, tmp_file_) if is_nuscenes else self._format_bbox_dair_v2x(results, img_metas, tmp_file_)
                 result_files.update({
                     rasult_name:
-                    self._format_bbox(results, img_metas, tmp_file_)
+                    rets
                 })
         return result_files, tmp_dir
 
@@ -175,6 +181,7 @@ class DetMVNuscEvaluator():
         self,
         results,
         img_metas,
+        is_nuscenes,
         metric='bbox',
         logger=None,
         jsonfile_prefix=None,
@@ -203,19 +210,106 @@ class DetMVNuscEvaluator():
         Returns:
             dict[str, float]: Results of each evaluation metric.
         """
-        result_files, tmp_dir = self.format_results(results, img_metas,
+        
+        result_files, tmp_dir = self.format_results(results, img_metas, is_nuscenes,
                                                     result_names,
                                                     jsonfile_prefix)
-        if isinstance(result_files, dict):
-            for name in result_names:
-                print('Evaluating bboxes of {}'.format(name))
-                self._evaluate_single(result_files[name])
-        elif isinstance(result_files, str):
-            self._evaluate_single(result_files)
+        if is_nuscenes:
+            if isinstance(result_files, dict):
+                for name in result_names:
+                    print('Evaluating bboxes of {}'.format(name))
+                    self._evaluate_single(result_files[name])
+            elif isinstance(result_files, str):
+                self._evaluate_single(result_files)
+            if tmp_dir is not None:
+                tmp_dir.cleanup()
+        else:
+            dair_root = "data/dair-v2x"
+            gt_label_path = os.path.join("data/dair-v2x-kitti", "training", "label_2")
+            results_path = "outputs"         
+            pred_label_path = result2kitti(result_files["img_bbox"], results_path, dair_root, demo=False)
+            kitti_evaluation(pred_label_path, gt_label_path, metric_path="output/bev_depth_lss_r50_256x704_128x128_24e")
 
-        if tmp_dir is not None:
-            tmp_dir.cleanup()
+    def _format_bbox_dair_v2x(self, results, img_metas, jsonfile_prefix=None):
+        """Convert the results to the standard format.
+        Args:
+            results (list[dict]): Testing results of the dataset.
+            jsonfile_prefix (str): The prefix of the output jsonfile.
+                You can specify the output directory/filename by
+                modifying the jsonfile_prefix. Default: None.
+        Returns:
+            str: Path of the output json file.
+        """
+        nusc_annos = {}
+        mapped_class_names = self.class_names
 
+        print('Start to convert detection format...')
+        for sample_id, det in enumerate(mmcv.track_iter_progress(results)):
+            boxes, scores, labels = det
+            boxes = boxes
+            sample_token = img_metas[sample_id]['token']
+            trans = np.array(img_metas[sample_id]['ego2global_translation'])
+            rot = Quaternion(img_metas[sample_id]['ego2global_rotation'])
+            annos = list()
+            for i, box in enumerate(boxes):
+                name = mapped_class_names[labels[i]]
+                center = box[:3]
+                wlh = box[[4, 3, 5]]
+                box_yaw = box[6]
+                box_vel = box[7:].tolist()
+                box_vel.append(0)
+                quat = pyquaternion.Quaternion(axis=[0, 0, 1], radians=box_yaw)
+                nusc_box = Box(center, wlh, quat, velocity=box_vel)
+                nusc_box.rotate(rot)
+                nusc_box.translate(trans)
+                if np.sqrt(nusc_box.velocity[0]**2 +
+                           nusc_box.velocity[1]**2) > 0.2:
+                    if name in [
+                            'car',
+                            'construction_vehicle',
+                            'bus',
+                            'truck',
+                            'trailer',
+                    ]:
+                        attr = 'vehicle.moving'
+                    elif name in ['bicycle', 'motorcycle']:
+                        attr = 'cycle.with_rider'
+                    else:
+                        attr = self.DefaultAttribute[name]
+                else:
+                    if name in ['pedestrian']:
+                        attr = 'pedestrian.standing'
+                    elif name in ['bus']:
+                        attr = 'vehicle.stopped'
+                    else:
+                        attr = self.DefaultAttribute[name]
+                nusc_anno = dict(
+                    sample_token=sample_token,
+                    translation=nusc_box.center.tolist(),
+                    size=nusc_box.wlh.tolist(),
+                    rotation=nusc_box.orientation.elements.tolist(),
+                    box_yaw=box_yaw,
+                    velocity=nusc_box.velocity[:2],
+                    detection_name=name,
+                    detection_score=float(scores[i]),
+                    attribute_name=attr,
+                )
+                annos.append(nusc_anno)
+            # other views results of the same frame should be concatenated
+            if sample_token in nusc_annos:
+                nusc_annos[sample_token].extend(annos)
+            else:
+                nusc_annos[sample_token] = annos
+        nusc_submissions = {
+            'meta': self.modality,
+            'results': nusc_annos,
+        }
+        mmcv.mkdir_or_exist(jsonfile_prefix)
+        res_path = osp.join(jsonfile_prefix, 'results_nusc.json')
+        print('Results writes to', res_path)
+        mmcv.dump(nusc_submissions, res_path)
+        return res_path
+    
     def _format_bbox(self, results, img_metas, jsonfile_prefix=None):
         """Convert the results to the standard format.
 
@@ -282,6 +376,7 @@ class DetMVNuscEvaluator():
                     detection_score=float(scores[i]),
                     attribute_name=attr,
                 )
+                
                 annos.append(nusc_anno)
             # other views results of the same frame should be concatenated
             if sample_token in nusc_annos:
