@@ -223,6 +223,8 @@ class DepthNet(nn.Module):
         self.context_se = SELayer(mid_channels)  # NOTE: add camera-aware
         self.depth_conv = nn.Sequential(
             BasicBlock(mid_channels, mid_channels),
+            BasicBlock(mid_channels, mid_channels),
+            BasicBlock(mid_channels, mid_channels),
             ASPP(mid_channels, mid_channels),
             build_conv_layer(cfg=dict(
                 type='DCN',
@@ -233,10 +235,6 @@ class DepthNet(nn.Module):
                 groups=4,
                 im2col_step=128,
             )),
-            BasicBlockUp(mid_channels, mid_channels),
-            BasicBlockUp(mid_channels, mid_channels),
-            BasicBlockUp(mid_channels, mid_channels),
-            BasicBlockUp(mid_channels, mid_channels),
             nn.Conv2d(mid_channels,
                       depth_channels,
                       kernel_size=1,
@@ -297,11 +295,8 @@ class DepthNet(nn.Module):
         depth_se = self.depth_mlp(mlp_input)[..., None, None]
         depth = self.depth_se(x, depth_se)
         depth = self.depth_conv(depth)
-
-        # sampled_depth = F.grid_sample(depth, self.grid_samples.unsqueeze(0).repeat(batch, 1, 1, 1), mode='bilinear', padding_mode='zeros')        
-        _, _, H, W = depth.shape
-        sampled_depth = depth[:, :, 0:H:16, 0:W:16]
-        return torch.cat([sampled_depth, context], dim=1), depth
+        # sampled_depth = F.grid_sample(depth, self.grid_samples.unsqueeze(0).repeat(batch, 1, 1, 1), mode='bilinear', padding_mode='zeros')                
+        return torch.cat([depth, context], dim=1)
 
 class LSSFPN(nn.Module):
     def __init__(self, x_bound, y_bound, z_bound, d_bound, final_dim,
@@ -558,14 +553,13 @@ class LSSFPN(nn.Module):
             img_width = sweep_imgs.shape
         img_feats = self.get_cam_feats(sweep_imgs)
         source_features = img_feats[:, 0, ...]
-        depth_feature, depth_up = self._forward_depth_net(
+        depth_feature = self._forward_depth_net(
             source_features.reshape(batch_size * num_cams,
                                     source_features.shape[2],
                                     source_features.shape[3],
                                     source_features.shape[4]),
             mats_dict,
         )
-        depth_up = depth_up.softmax(1)
         depth = depth_feature[:, :self.depth_channels].softmax(1)
         img_feat_with_depth = depth.unsqueeze(
             1) * depth_feature[:, self.depth_channels:(
@@ -595,7 +589,7 @@ class LSSFPN(nn.Module):
         feature_map = voxel_pooling(geom_xyz, img_feat_with_depth.contiguous(),
                                     self.voxel_num.cuda())
         if is_return_depth:
-            return feature_map.contiguous(), depth_up
+            return feature_map.contiguous(), depth
         return feature_map.contiguous()
 
     def forward(self,

@@ -232,9 +232,9 @@ class BEVDepthLightningModel(LightningModule):
         self.data_return_depth = True
         self.downsample_factor = self.backbone_conf['downsample_factor'] // 16
         self.dbound = self.backbone_conf['d_bound']
-        # self.depth_channels = int(
-        #     (self.dbound[1] - self.dbound[0]) / self.dbound[2])
-        self.depth_channels = self.dbound[2]
+        self.depth_channels = int(
+             (self.dbound[1] - self.dbound[0]) / self.dbound[2])
+        # self.depth_channels = self.dbound[2]
 
     def forward(self, sweep_imgs, mats):
         return self.model(sweep_imgs, mats)
@@ -275,10 +275,11 @@ class BEVDepthLightningModel(LightningModule):
 
     def get_depth_loss(self, depth_labels, depth_preds):
         depth_labels = self.get_downsampled_gt_depth(depth_labels)
+        
         depth_preds = depth_preds.permute(0, 2, 3, 1).contiguous().view(
             -1, self.depth_channels)
         fg_mask = torch.max(depth_labels, dim=1).values > 0.0
-
+        
         with autocast(enabled=False):
             depth_loss = (F.binary_cross_entropy(
                 depth_preds[fg_mask],
@@ -342,6 +343,9 @@ class BEVDepthLightningModel(LightningModule):
         gt_depths = torch.where(
             (gt_depths < self.depth_channels + 1) & (gt_depths >= 0.0),
             gt_depths, torch.zeros_like(gt_depths))
+        
+        _, H, W = gt_depths.shape
+        gt_depths = gt_depths[:, 0:H:16, 0:W:16]
         gt_depths = F.one_hot(gt_depths.long(),
                               num_classes=self.depth_channels + 1).view(
                                   -1, self.depth_channels + 1)[:, 1:]
