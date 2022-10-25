@@ -235,6 +235,8 @@ class DepthNet(nn.Module):
             )),
             BasicBlockUp(mid_channels, mid_channels),
             BasicBlockUp(mid_channels, mid_channels),
+            BasicBlockUp(mid_channels, mid_channels),
+            BasicBlockUp(mid_channels, mid_channels),
             nn.Conv2d(mid_channels,
                       depth_channels,
                       kernel_size=1,
@@ -298,7 +300,7 @@ class DepthNet(nn.Module):
 
         # sampled_depth = F.grid_sample(depth, self.grid_samples.unsqueeze(0).repeat(batch, 1, 1, 1), mode='bilinear', padding_mode='zeros')        
         _, _, H, W = depth.shape
-        sampled_depth = depth[:, :, 0:H:4, 0:W:4]
+        sampled_depth = depth[:, :, 0:H:16, 0:W:16]
         return torch.cat([sampled_depth, context], dim=1), depth
 
 class LSSFPN(nn.Module):
@@ -365,12 +367,10 @@ class LSSFPN(nn.Module):
         # make grid in image plane
         ogfH, ogfW = self.final_dim
         fH, fW = ogfH // self.downsample_factor, ogfW // self.downsample_factor
-        # depth
-        '''
+        # depth        
         d_coords = torch.arange(*self.d_bound,
                                 dtype=torch.float).view(-1, 1,
                                                         1).expand(-1, fH, fW)
-        '''
         # height SID style
         '''
         range_num1 = int(self.d_bound[2] * abs(self.d_bound[0]) / (self.d_bound[1] - self.d_bound[0]))
@@ -407,6 +407,7 @@ class LSSFPN(nn.Module):
         d_coords = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
         '''
         # PID
+        '''
         alpha = 2
         if self.d_bound[0] < 0:
             range_num1 = int(self.d_bound[2] * abs(self.d_bound[0]) / (self.d_bound[1] - self.d_bound[0]))
@@ -429,7 +430,7 @@ class LSSFPN(nn.Module):
             delta = np.power(delta, alpha) 
             d_coords = d_min + delta * (d_max - d_min)
             d_coords = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
-            
+        '''  
         D, _, _ = d_coords.shape
         x_coords = torch.linspace(0, ogfW - 1, fW, dtype=torch.float).view(
             1, 1, fW).expand(D, fH, fW)

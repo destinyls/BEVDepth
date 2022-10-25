@@ -35,8 +35,9 @@ backbone_conf = {
     'x_bound': [-51.2, 51.2, 0.8],
     'y_bound': [-51.2, 51.2, 0.8],
     'z_bound': [-5, 3, 8],
-    # 'd_bound': [-3.0, 7.0, 0.05],
-    'd_bound': [-7.0, 7.0, 210],
+     # 'd_bound': [2.0, 58.0, 0.05],
+    'd_bound': [-3.0, 7.0, 0.05],
+    # 'd_bound': [-7.0, 7.0, 210],
     'final_dim':
     final_dim,
     'output_channels':
@@ -229,7 +230,7 @@ class BEVDepthLightningModel(LightningModule):
         self.sweep_idxes = list()
         self.key_idxes = list()
         self.data_return_depth = True
-        self.downsample_factor = self.backbone_conf['downsample_factor'] // 4
+        self.downsample_factor = self.backbone_conf['downsample_factor'] // 16
         self.dbound = self.backbone_conf['d_bound']
         # self.depth_channels = int(
         #     (self.dbound[1] - self.dbound[0]) / self.dbound[2])
@@ -312,7 +313,6 @@ class BEVDepthLightningModel(LightningModule):
         gt_depths = torch.min(gt_depths_tmp, dim=-1).values
         gt_depths = gt_depths.view(B * N, H // self.downsample_factor,
                                    W // self.downsample_factor)
-        '''
         gt_depths = (gt_depths -
                      (self.dbound[0] - self.dbound[2])) / self.dbound[2]
         '''
@@ -338,7 +338,7 @@ class BEVDepthLightningModel(LightningModule):
             gt_depths = (gt_depths - d_min) / (self.dbound[1] - d_min)
             gt_depths = torch.floor(torch.pow(gt_depths, 1 / alpha) * self.dbound[2])
             gt_depths = gt_depths + 1
-        
+        '''
         gt_depths = torch.where(
             (gt_depths < self.depth_channels + 1) & (gt_depths >= 0.0),
             gt_depths, torch.zeros_like(gt_depths))
