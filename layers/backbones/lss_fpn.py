@@ -513,6 +513,7 @@ class LSSFPN(nn.Module):
                     self.voxel_size).int()
         feature_map = voxel_pooling(geom_xyz, img_feat_with_depth.contiguous(),
                                     self.voxel_num.cuda())
+        
         if is_return_depth:
             return feature_map.contiguous(), depth
         return feature_map.contiguous()

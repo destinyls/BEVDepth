@@ -32,8 +32,8 @@ img_conf = dict(img_mean=[123.675, 116.28, 103.53],
                 to_rgb=True)
 
 backbone_conf = {
-    'x_bound': [-76.8, 76.8, 0.8],
-    'y_bound': [-76.8, 76.8, 0.8],
+    'x_bound': [-64.0, 64.0, 0.8],
+    'y_bound': [-64.0, 64.0, 0.8],
     'z_bound': [-5, 3, 8],
     # 'd_bound': [-3.0, 5.0, 0.05],
     'd_bound': [-7.0, 7.0, 200],
@@ -141,13 +141,13 @@ bbox_coder = dict(
     score_threshold=0.1,
     out_size_factor=4,
     voxel_size=[0.2, 0.2, 8],
-    pc_range=[-76.8, -76.8, -5, 76.8, 76.8, 3],
+    pc_range=[-64.0, -64.0, -5, 64.0, 64.0, 3],
     code_size=9,
 )
 
 train_cfg = dict(
-    point_cloud_range=[-76.8, -76.8, -5, 76.8, 76.8, 3],
-    grid_size=[512, 512, 1],
+    point_cloud_range=[-64.0, -64.0, -5, 64.0, 64.0, 3],
+    grid_size=[640, 640, 1],
     voxel_size=[0.2, 0.2, 8],
     out_size_factor=4,
     dense_reg=1,
