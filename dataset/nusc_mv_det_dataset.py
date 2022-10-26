@@ -1,6 +1,7 @@
 import os
 import math
 import cv2
+import random
 
 import mmcv
 import numpy as np
@@ -58,12 +59,14 @@ def equation_plane(points):
     d = (- a * x1 - b * y1 - c * z1)
     return np.array([a, b, c, d])
 
+
 def get_denorm(sweepego2sweepsensor):
     ground_points_lidar = np.array([[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]])
     ground_points_lidar = np.concatenate((ground_points_lidar, np.ones((ground_points_lidar.shape[0], 1))), axis=1)
     ground_points_cam = np.matmul(sweepego2sweepsensor, ground_points_lidar.T).T
     denorm = -1 * equation_plane(ground_points_cam)
     return denorm
+
 
 def get_sensor2virtual(denorm):
     origin_vector = np.array([0, 1, 0])    
@@ -79,15 +82,18 @@ def get_sensor2virtual(denorm):
     sensor2virtual[:3, :3] = rot_mat
     return sensor2virtual.astype(np.float32)
 
+
 def get_reference_height(denorm):
     ref_height = np.abs(denorm[3]) / np.sqrt(denorm[0]**2 + denorm[1]**2 + denorm[2]**2)
     return ref_height.astype(np.float32)
+
 
 def get_rot(h):
     return torch.Tensor([
         [np.cos(h), np.sin(h)],
         [-np.sin(h), np.cos(h)],
     ])
+    
 
 def img_intrin_extrin_transform(img, ratio, roll, transform_pitch, intrin_mat):
     center = intrin_mat[:2, 2].astype(np.int32) 
@@ -106,6 +112,7 @@ def img_intrin_extrin_transform(img, ratio, roll, transform_pitch, intrin_mat):
         image = img.crop((w_min, h_min,  w_min + W, h_min + H))
     img = image.rotate(-roll, expand=0, center=center, translate=(0, transform_pitch), fillcolor=(0,0,0), resample=Image.BICUBIC)
     return img
+
 
 def img_transform(img, resize, resize_dims, crop, flip, rotate):
     ida_rot = torch.eye(2)
@@ -321,13 +328,11 @@ class NuscMVDetDataset(Dataset):
         intrin_mat, sweepego2sweepsensor = intrin_mat.numpy(), sweepego2sweepsensor.numpy()
         # rectify intrin_mat
         ratio = np.random.normal(self.ratio_range[0], self.ratio_range[1])
-        ratio = 0.85
         intrin_mat_rectify = intrin_mat.copy()
         intrin_mat_rectify[:2,:2] = intrin_mat[:2,:2] * ratio
         
         # rectify sweepego2sweepsensor by roll
         roll = np.random.normal(self.roll_range[0], self.roll_range[1])
-        roll = 0.0
         roll_rad = self.degree2rad(roll)
         rectify_roll = np.array([[math.cos(roll_rad), -math.sin(roll_rad), 0, 0], 
                                  [math.sin(roll_rad), math.cos(roll_rad), 0, 0], 
@@ -337,7 +342,6 @@ class NuscMVDetDataset(Dataset):
         
         # rectify sweepego2sweepsensor by pitch
         pitch = np.random.normal(self.pitch_range[0], self.pitch_range[1])
-        pitch = 0.0
         pitch_rad = self.degree2rad(pitch)
         rectify_pitch = np.array([[1, 0, 0, 0],
                                   [0,math.cos(pitch_rad), -math.sin(pitch_rad), 0], 
@@ -367,14 +371,16 @@ class NuscMVDetDataset(Dataset):
     def sample_ida_augmentation(self, is_nuscenes):
         """Generate ida augmentation values based on ida_config."""
         H, W = self.ida_aug_conf['H'], self.ida_aug_conf['W']
-        fH, fW = self.ida_aug_conf['final_dim']
+        fH, fW = self.ida_aug_conf['final_dim']            
+            
         if self.is_train and not is_nuscenes:
-            resize = max(fH / H, fW / W)
+            resize = np.random.uniform(*self.ida_aug_conf['resize_lim'])
             resize_dims = (int(W * resize), int(H * resize))
             newW, newH = resize_dims
             crop_h = int(
-                (1 - np.mean(self.ida_aug_conf['bot_pct_lim'])) * newH) - fH
-            crop_w = int(max(0, newW - fW) / 2)
+                (1 - np.random.uniform(*self.ida_aug_conf['bot_pct_lim'])) *
+                newH) - fH
+            crop_w = int(np.random.uniform(0, max(0, newW - fW)))
             crop = (crop_w, crop_h, crop_w + fW, crop_h + fH)
             flip = False
             if self.ida_aug_conf['rand_flip'] and np.random.choice([0, 1]):
@@ -480,8 +486,7 @@ class NuscMVDetDataset(Dataset):
                     cam_info[cam]['calibrated_sensor']['camera_intrinsic'])
                 sweepego2sweepsensor = sweepsensor2sweepego.inverse()
                 
-                # if self.is_train and False:
-                if True:
+                if self.is_train and not self.is_nuscenes and random.random() < 0.5:
                     intrin_mat, sweepego2sweepsensor, ratio, roll, transform_pitch = self.sample_intrin_extrin_augmentation(intrin_mat, sweepego2sweepsensor)
                     img = img_intrin_extrin_transform(img, ratio, roll, transform_pitch, intrin_mat.numpy())
                     '''
@@ -531,10 +536,6 @@ class NuscMVDetDataset(Dataset):
                 sensor2sensor_mats.append(keysensor2sweepsensor)
                 sensor2virtual_mats.append(sensor2virtual)
 
-                intrin_mat = torch.zeros((4, 4))
-                intrin_mat[3, 3] = 1
-                intrin_mat[:3, :3] = torch.Tensor(
-                    cam_info[cam]['calibrated_sensor']['camera_intrinsic'])
                 if self.return_depth and sweep_idx == 0:
                     file_name = os.path.split(cam_info[cam]['filename'])[-1]
                     point_depth = np.fromfile(os.path.join(

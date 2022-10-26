@@ -43,12 +43,14 @@ class ImageRectify(object):
     
     def rectify_cam_intrinsic(self, cam_intrinsic):
         ratio = np.random.normal(self.ratio[0], self.ratio[1])
+        ratio = 0.95
         cam_intrinsic_rectify = cam_intrinsic.copy()
         cam_intrinsic_rectify[:2,:2] = cam_intrinsic[:2,:2] * ratio
         return cam_intrinsic_rectify, ratio
     
     def rectify_roll_params(self, lidar2cam):
         roll = np.random.normal(self.roll_range[0], self.roll_range[1])
+        roll = 0.0
         roll_rad = self.degree2rad(roll)
         rectify_roll = np.array([[math.cos(roll_rad), -math.sin(roll_rad), 0, 0], 
                                  [math.sin(roll_rad), math.cos(roll_rad), 0, 0], 
@@ -59,6 +61,7 @@ class ImageRectify(object):
 
     def rectify_pitch_params(self, lidar2cam):
         pitch = np.random.normal(self.roll_range[0], self.roll_range[1])
+        pitch = 0.0
         pitch_rad = self.degree2rad(pitch)
         rectify_pitch = np.array([[1, 0, 0, 0],
                                   [0,math.cos(pitch_rad), -math.sin(pitch_rad), 0], 

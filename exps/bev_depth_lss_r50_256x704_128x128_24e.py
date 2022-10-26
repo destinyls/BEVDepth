@@ -58,7 +58,7 @@ else:
     data_root = 'data/dair-v2x'
     train_info_path = 'data/dair-v2x/dair_12hz_infos_train.pkl'
     val_info_path = 'data/dair-v2x/dair_12hz_infos_val.pkl'
-    max_epochs, every_n_epochs = 200, 10
+    max_epochs, every_n_epochs = 150, 10
     precision = 32
     post_center_range = [0.0, -61.2, -10.0, 122.4, 61.2, 10.0]
     post_center_limit_range = [0.0, -61.2, -10.0, 122.4, 61.2, 10.0]
@@ -502,6 +502,7 @@ def main(args: Namespace) -> None:
             model_path = os.path.join(args.ckpt_path, ckpt_name)
             trainer.test(model, ckpt_path=model_path)
     else:
+        backup_codebase()
         trainer.fit(model)
 
 
@@ -535,6 +536,5 @@ def run_cli():
     main(args)
     
 if __name__ == '__main__':
-    backup_codebase()
     run_cli()
     
