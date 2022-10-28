@@ -312,7 +312,6 @@ class LSSFPN(nn.Module):
         # make grid in image plane
         ogfH, ogfW = self.final_dim
         fH, fW = ogfH // self.downsample_factor, ogfW // self.downsample_factor
-        '''
         d_coords = torch.arange(*self.d_bound,
                                 dtype=torch.float).view(-1, 1,
                                                         1).expand(-1, fH, fW)
@@ -320,7 +319,7 @@ class LSSFPN(nn.Module):
         d_coords = np.arange(self.d_bound[2]) / self.d_bound[2] * (math.log(self.d_bound[1]) - math.log(self.d_bound[0]))
         d_coords = np.exp(d_coords + math.log(self.d_bound[0]))
         d_coords = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
-
+        '''
         D, _, _ = d_coords.shape
         x_coords = torch.linspace(0, ogfW - 1, fW, dtype=torch.float).view(
             1, 1, fW).expand(D, fH, fW)
@@ -385,8 +384,8 @@ class LSSFPN(nn.Module):
         points = self.frustum
         ida_mat = ida_mat.view(batch_size, num_cams, 1, 1, 1, 4, 4)
         points = ida_mat.inverse().matmul(points.unsqueeze(-1))
-        points = self.height2localtion(points, sensor2ego_mat, sensor2virtual_mat, intrin_mat, reference_heights) 
-        # points = self.depth2location(points, sensor2ego_mat, intrin_mat)        
+        # points = self.height2localtion(points, sensor2ego_mat, sensor2virtual_mat, intrin_mat, reference_heights) 
+        points = self.depth2location(points, sensor2ego_mat, intrin_mat)        
         if bda_mat is not None:
             bda_mat = bda_mat.unsqueeze(1).repeat(1, num_cams, 1, 1).view(
                 batch_size, num_cams, 1, 1, 1, 4, 4)

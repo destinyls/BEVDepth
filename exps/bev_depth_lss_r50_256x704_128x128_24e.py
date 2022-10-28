@@ -21,6 +21,7 @@ from dataset.nusc_mv_det_dataset import NuscMVDetDataset, collate_fn
 from evaluators.det_mv_evaluators import DetMVNuscEvaluator
 from models.bev_depth import BEVDepth
 from utils.torch_dist import all_gather_object, get_rank, synchronize
+from utils.backup_files import backup_codebase
 
 
 ''''
@@ -41,7 +42,7 @@ backbone_conf = {
     'y_bound': [-51.2, 51.2, 0.8],
     'z_bound': [-5, 3, 8],
      # 'd_bound': [-3.0, 5.0, 0.1],
-    'd_bound': [2.5, 10.5, 80],
+    'd_bound': [2.0, 104.5, 0.5],
     'final_dim':
     final_dim,
     'output_channels':
@@ -51,11 +52,11 @@ backbone_conf = {
     'img_backbone_conf':
     dict(
         type='ResNet',
-        depth=50,
+        depth=101,
         frozen_stages=0,
         out_indices=[0, 1, 2, 3],
         norm_eval=False,
-        init_cfg=dict(type='Pretrained', checkpoint='torchvision://resnet50'),
+        init_cfg=dict(type='Pretrained', checkpoint='torchvision://resnet101'),
     ),
     'img_neck_conf':
     dict(
@@ -231,7 +232,7 @@ class BEVDepthLightningModel(LightningModule):
         self.sweep_idxes = list()
         self.key_idxes = list()
         self.data_return_depth = True
-        self.up_stride = 8
+        self.up_stride = 1
         self.downsample_factor = self.backbone_conf['downsample_factor'] // self.up_stride
         self.dbound = self.backbone_conf['d_bound']
         self.depth_channels = int(self.dbound[2])
@@ -314,11 +315,10 @@ class BEVDepthLightningModel(LightningModule):
         gt_depths = gt_depths.view(B * N, H // self.downsample_factor,
                                    W // self.downsample_factor)
 
-        '''
         gt_depths = (gt_depths -
                      (self.dbound[0] - self.dbound[2])) / self.dbound[2]
-        '''
-        gt_depths = self.dbound[2] * (torch.log(gt_depths) - math.log(self.dbound[0])) / (math.log(self.dbound[1]) - math.log(self.dbound[0]))
+        
+        # gt_depths = self.dbound[2] * (torch.log(gt_depths) - math.log(self.dbound[0])) / (math.log(self.dbound[1]) - math.log(self.dbound[0]))
         gt_depths = torch.where(
             (gt_depths < self.depth_channels + 1) & (gt_depths >= 0.0),
             gt_depths, torch.zeros_like(gt_depths))
@@ -464,13 +464,14 @@ def main(args: Namespace) -> None:
     print(args)
     
     model = BEVDepthLightningModel(**vars(args))
-    checkpoint_callback = ModelCheckpoint(dirpath='./outputs/bev_depth_lss_r50_256x704_128x128_24e/checkpoints', filename='{epoch}', every_n_epochs=20, save_last=True, save_top_k=-1)
+    checkpoint_callback = ModelCheckpoint(dirpath='./outputs/bev_depth_lss_r50_256x704_128x128_24e/checkpoints', filename='{epoch}', every_n_epochs=10, save_last=True, save_top_k=-1)
     trainer = pl.Trainer.from_argparse_args(args, callbacks=[checkpoint_callback])
     if args.evaluate:
         for ckpt_name in os.listdir(args.ckpt_path):
             model_pth = os.path.join(args.ckpt_path, ckpt_name)
             trainer.test(model, ckpt_path=model_pth)
     else:
+        backup_codebase()
         trainer.fit(model)
         
 def run_cli():
@@ -491,7 +492,7 @@ def run_cli():
     parser.set_defaults(
         profiler='simple',
         deterministic=False,
-        max_epochs=200,
+        max_epochs=150,
         accelerator='ddp',
         num_sanity_val_steps=0,
         gradient_clip_val=5,
