@@ -10,6 +10,9 @@ from tqdm import tqdm
 
 from scripts.vis_utils import *
 
+import matplotlib.pyplot as plt
+import numpy as np
+
 name2nuscenceclass = {
     "car": "vehicle.car",
     "van": "vehicle.car",
@@ -107,10 +110,16 @@ def generate_info_dair(dair_root, split):
     infos = mmcv.load("scripts/single-infrastructure-split-data.json")
     split_list = infos[split]
     infos = list()
+    img_locs_list = list()
+    ego_locs_list = list()
+
     for sample_id in tqdm(split_list):
         token = "image/" + sample_id + ".jpg"
         r_velo2cam, t_velo2cam, camera_intrinsic, gt_names, gt_boxes, img_pth = load_data(dair_root, token)
-
+        Tr_velo2cam = np.eye(4)
+        Tr_velo2cam[:3,:3] = r_velo2cam
+        Tr_velo2cam[:3,3] = t_velo2cam[:,0]
+        
         info = dict()
         cam_info = dict()
         info['sample_token'] = token
@@ -158,6 +167,11 @@ def generate_info_dair(dair_root, split):
             gt_box = gt_boxes[idx]
             lwh = gt_box[3:6]
             loc = gt_box[:3]    # need to certify
+            
+            img_loc = np.matmul(Tr_velo2cam, np.array([[loc[0],loc[1],loc[2], 1]]).T)            
+            img_locs_list.append(img_loc[:3])
+            ego_locs_list.append(loc[:,np.newaxis])
+            print(img_loc[:3].shape, loc[:,np.newaxis].shape)
             yaw_lidar = gt_box[6]
             rot_mat = np.array([[math.cos(yaw_lidar), -math.sin(yaw_lidar), 0], 
                                 [math.sin(yaw_lidar), math.cos(yaw_lidar), 0], 
@@ -182,6 +196,24 @@ def generate_info_dair(dair_root, split):
         info['ann_infos'] = ann_infos
         infos.append(info)
         
+    img_locs_array = np.concatenate(img_locs_list, axis=1)
+    ego_locs_array = np.concatenate(ego_locs_list, axis=1)
+    
+    print(img_locs_array.shape, ego_locs_array.shape)
+    plt.figure(figsize=(16, 8))
+    plt.scatter(img_locs_array[2, :], 
+                ego_locs_array[2, :],
+                c='red')
+    
+    print("depth mean & var: ", np.mean(img_locs_array[2, :]), np.var(img_locs_array[2, :]))
+    print("height mean & var: ", np.mean(ego_locs_array[2, :]), np.var(ego_locs_array[2, :]))
+    
+    
+    plt.xlabel('depth', fontdict={'weight': 'normal', 'size': 25})
+    plt.ylabel('height', fontdict={'weight': 'normal', 'size': 25})
+    plt.tick_params(labelsize=20)
+    plt.savefig('distribution.png')
+
     return infos
 
 def main():

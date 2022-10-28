@@ -77,7 +77,6 @@ if __name__ == '__main__':
         camera_points = np.matmul(lidar2cam, points.T).T
         virtual_points = np.matmul(cam2virtual, camera_points.T).T
         virtual_height = virtual_points[:, 1]
-        # height_offsets = virtual_points[:, 1] - height_ref
         
         depths = camera_points[:, 2]
         P = np.eye(4)
@@ -95,16 +94,40 @@ if __name__ == '__main__':
         img_poins = img_poins[:, mask].astype(np.int32)
         depths = depths[mask]
         virtual_height = virtual_height[mask]
-        img_path = os.path.join(data_root, info["sample_token"])
-        # img = cv2.imread(img_path)
-        # img[img_poins[1,:], img_poins[0,:], 0] = 255
-        # cv2.imwrite("demo.jpg", img)
-
+        
         gt_boxes = to_gt_boxes(info["ann_infos"])
         # demo(img_path, gt_boxes, r_lidar2cam, t_lidar2cam, camera_intrinsic)
         os.makedirs(os.path.join(data_root, 'depth_gt'), exist_ok=True)
         os.makedirs(os.path.join(data_root, 'height_gt'), exist_ok=True)
+           
+        img_path = os.path.join(data_root, info["sample_token"])
+        img = cv2.imread(img_path)
+        empty_img = np.zeros_like(img)
         
+        virtual_height = -1 * virtual_height
+        virtual_height -= 8.0
+        virtual_height -= np.min(virtual_height)
+        for i in range(img_poins.shape[1]):
+            if depths[i] < 80:
+                depth_color = (255-3*depths[i], 0, 3*depths[i])
+            else:
+                depth_color = (255-3*depths[i], depths[i], 3*depths[i])
+            
+            print(np.min(virtual_height), np.max(virtual_height))
+            if virtual_height[i] < 200:
+                depth_color = (255-10*virtual_height[i], 0, 5*virtual_height[i])
+            else:
+                depth_color = (255-5*virtual_height[i], 5*virtual_height[i], 5*virtual_height[i])
+            
+            height_color = virtual_height[i]
+            # img = cv2.circle(img, (img_poins[0,i], img_poins[1,i]), radius=2, color=depth_color, thickness=-1) 
+            # empty_img = cv2.circle(empty_img, (img_poins[0,i], img_poins[1,i]), radius=2, color=depth_color, thickness=-1) 
+
+        cv2.imwrite("demo.jpg", img)
+        cv2.imwrite("empty_demo.jpg", empty_img)
+        
+        break
+
         np.concatenate([img_poins[:2, :].T, depths[:, None]],
                        axis=1).astype(np.float32).flatten().tofile(
                            os.path.join(data_root, 'depth_gt',

@@ -1,4 +1,5 @@
 import os
+import cv2
 from multiprocessing import Pool
 
 import mmcv
@@ -88,6 +89,8 @@ def worker(info):
         'calibrated_sensor']
     lidar_ego_pose = info['lidar_infos'][lidar_key]['ego_pose']
     for i, cam_key in enumerate(cam_keys):
+        if cam_key is not "CAM_FRONT":
+            continue
         cam_calibrated_sensor = info['cam_infos'][cam_key]['calibrated_sensor']
         cam_ego_pose = info['cam_infos'][cam_key]['ego_pose']
         img = mmcv.imread(
@@ -97,17 +100,36 @@ def worker(info):
             lidar_ego_pose.copy(), cam_calibrated_sensor, cam_ego_pose)
         file_name = os.path.split(info['cam_infos'][cam_key]['filename'])[-1]
         print("pts_img: ", pts_img.shape)
+        '''
         np.concatenate([pts_img[:2, :].T, depth[:, None]],
                        axis=1).astype(np.float32).flatten().tofile(
                            os.path.join(data_root, 'depth_gt',
                                         f'{file_name}.bin'))
+        '''
+        empty_img = np.zeros_like(img)
+        for i in range(pts_img.shape[1]):
+            if depth[i] < 80:
+                depth_color = (255-3*depth[i], 0, 3*depth[i])
+            else:
+                depth_color = (255-3*depth[i], depth[i], 3*depth[i])
+                
+            # img = cv2.circle(img, (int(pts_img[0,i]), int(pts_img[1,i])), radius=8, color=depth_color, thickness=-1) 
+            # empty_img = cv2.circle(empty_img, (int(pts_img[0,i]), int(pts_img[1,i])), radius=8, color=depth_color, thickness=-1) 
 
+        cv2.imwrite("demo.jpg", img)
+        cv2.imwrite("empty_demo.jpg", empty_img)
+        
+        
 if __name__ == '__main__':
     po = Pool(24)
     mmcv.mkdir_or_exist(os.path.join(data_root, 'depth_gt'))
     infos = mmcv.load(info_path)
     # import ipdb; ipdb.set_trace()
     for info in infos:
-        po.apply_async(func=worker, args=(info, ))
+        
+        worker(infos[200])
+        break
+        
+        # po.apply_async(func=worker, args=(info, ))
     po.close()
     po.join()
