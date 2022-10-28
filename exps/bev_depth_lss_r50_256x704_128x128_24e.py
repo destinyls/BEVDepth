@@ -2,6 +2,7 @@
 from argparse import ArgumentParser, Namespace
 
 import os
+import math
 import mmcv
 import pytorch_lightning as pl
 import torch
@@ -21,6 +22,7 @@ from evaluators.det_mv_evaluators import DetMVNuscEvaluator
 from models.bev_depth import BEVDepth
 from utils.torch_dist import all_gather_object, get_rank, synchronize
 
+
 ''''
 H = 900
 W = 1600
@@ -28,7 +30,7 @@ final_dim = (256, 704)
 '''
 H = 1080
 W = 1920
-final_dim = (384, 704)
+final_dim = (864, 1536)
 
 img_conf = dict(img_mean=[123.675, 116.28, 103.53],
                 img_std=[58.395, 57.12, 57.375],
@@ -38,7 +40,8 @@ backbone_conf = {
     'x_bound': [0, 102.4, 0.8],
     'y_bound': [-51.2, 51.2, 0.8],
     'z_bound': [-5, 3, 8],
-    'd_bound': [-3.0, 5.0, 0.1],
+     # 'd_bound': [-3.0, 5.0, 0.1],
+    'd_bound': [2.5, 10.5, 80],
     'final_dim':
     final_dim,
     'output_channels':
@@ -228,10 +231,10 @@ class BEVDepthLightningModel(LightningModule):
         self.sweep_idxes = list()
         self.key_idxes = list()
         self.data_return_depth = True
-        self.downsample_factor = self.backbone_conf['downsample_factor']
+        self.up_stride = 8
+        self.downsample_factor = self.backbone_conf['downsample_factor'] // self.up_stride
         self.dbound = self.backbone_conf['d_bound']
-        self.depth_channels = int(
-            (self.dbound[1] - self.dbound[0]) / self.dbound[2])
+        self.depth_channels = int(self.dbound[2])
 
     def forward(self, sweep_imgs, mats):
         return self.model(sweep_imgs, mats)
@@ -311,11 +314,16 @@ class BEVDepthLightningModel(LightningModule):
         gt_depths = gt_depths.view(B * N, H // self.downsample_factor,
                                    W // self.downsample_factor)
 
+        '''
         gt_depths = (gt_depths -
                      (self.dbound[0] - self.dbound[2])) / self.dbound[2]
+        '''
+        gt_depths = self.dbound[2] * (torch.log(gt_depths) - math.log(self.dbound[0])) / (math.log(self.dbound[1]) - math.log(self.dbound[0]))
         gt_depths = torch.where(
             (gt_depths < self.depth_channels + 1) & (gt_depths >= 0.0),
             gt_depths, torch.zeros_like(gt_depths))
+        _, H, W = gt_depths.shape
+        gt_depths = gt_depths[:, 0:H:self.up_stride, 0:W:self.up_stride]
         gt_depths = F.one_hot(gt_depths.long(),
                               num_classes=self.depth_channels + 1).view(
                                   -1, self.depth_channels + 1)[:, 1:]
