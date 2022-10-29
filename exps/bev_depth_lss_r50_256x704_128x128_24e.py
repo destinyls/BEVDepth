@@ -52,11 +52,11 @@ backbone_conf = {
     'img_backbone_conf':
     dict(
         type='ResNet',
-        depth=101,
+        depth=50,
         frozen_stages=0,
         out_indices=[0, 1, 2, 3],
         norm_eval=False,
-        init_cfg=dict(type='Pretrained', checkpoint='torchvision://resnet101'),
+        init_cfg=dict(type='Pretrained', checkpoint='torchvision://resnet50'),
     ),
     'img_neck_conf':
     dict(
@@ -224,14 +224,14 @@ class BEVDepthLightningModel(LightningModule):
                                             output_dir=self.default_root_dir)
         self.model = BEVDepth(self.backbone_conf,
                               self.head_conf,
-                              is_train_depth=False)
+                              is_train_depth=True)
         self.mode = 'valid'
         self.img_conf = img_conf
         self.data_use_cbgs = False
         self.num_sweeps = 1
         self.sweep_idxes = list()
         self.key_idxes = list()
-        self.data_return_depth = False
+        self.data_return_depth = True
         self.up_stride = 8
         self.downsample_factor = self.backbone_conf['downsample_factor'] // self.up_stride
         self.dbound = self.backbone_conf['d_bound']
@@ -320,6 +320,8 @@ class BEVDepthLightningModel(LightningModule):
                      (self.dbound[0] - self.dbound[2])) / self.dbound[2]
         '''
         gt_depths = self.dbound[2] * (torch.log(gt_depths) - math.log(self.dbound[0])) / (math.log(self.dbound[1]) - math.log(self.dbound[0]))
+        gt_depths = gt_depths + 1
+        
         gt_depths = torch.where(
             (gt_depths < self.depth_channels + 1) & (gt_depths >= 0.0),
             gt_depths, torch.zeros_like(gt_depths))
@@ -493,7 +495,7 @@ def run_cli():
     parser.set_defaults(
         profiler='simple',
         deterministic=False,
-        max_epochs=150,
+        max_epochs=120,
         accelerator='ddp',
         num_sanity_val_steps=0,
         gradient_clip_val=5,
