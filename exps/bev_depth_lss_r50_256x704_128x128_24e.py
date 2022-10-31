@@ -52,11 +52,11 @@ backbone_conf = {
     'img_backbone_conf':
     dict(
         type='ResNet',
-        depth=101,
+        depth=50,
         frozen_stages=0,
         out_indices=[0, 1, 2, 3],
         norm_eval=False,
-        init_cfg=dict(type='Pretrained', checkpoint='torchvision://resnet101'),
+        init_cfg=dict(type='Pretrained', checkpoint='torchvision://resnet50'),
     ),
     'img_neck_conf':
     dict(
@@ -196,7 +196,7 @@ class BEVDepthLightningModel(LightningModule):
 
     def __init__(self,
                  gpus: int = 1,
-                 data_root='data/dair-v2x/',
+                 data_root='data/rope3d/',
                  eval_interval=1,
                  batch_size_per_device=8,
                  class_names=CLASSES,
@@ -401,7 +401,7 @@ class BEVDepthLightningModel(LightningModule):
             bda_aug_conf=self.bda_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path='data/dair-v2x/dair_12hz_infos_train.pkl',
+            info_path='data/rope3d/rope3d_12hz_infos_train.pkl',
             is_train=True,
             use_cbgs=self.data_use_cbgs,
             img_conf=self.img_conf,
@@ -430,7 +430,7 @@ class BEVDepthLightningModel(LightningModule):
             bda_aug_conf=self.bda_aug_conf,
             classes=self.class_names,
             data_root=self.data_root,
-            info_path='data/dair-v2x/dair_12hz_infos_val.pkl',
+            info_path='data/rope3d/rope3d_12hz_infos_val.pkl',
             is_train=False,
             img_conf=self.img_conf,
             num_sweeps=self.num_sweeps,
