@@ -52,11 +52,11 @@ backbone_conf = {
     'img_backbone_conf':
     dict(
         type='ResNet',
-        depth=101,
+        depth=50,
         frozen_stages=0,
         out_indices=[0, 1, 2, 3],
         norm_eval=False,
-        init_cfg=dict(type='Pretrained', checkpoint='torchvision://resnet101'),
+        init_cfg=dict(type='Pretrained', checkpoint='torchvision://resnet50'),
     ),
     'img_neck_conf':
     dict(
@@ -149,8 +149,8 @@ bbox_coder = dict(
 
 train_cfg = dict(
     point_cloud_range=[0, -51.2, -5, 102.4, 51.2, 3],
-    grid_size=[512, 512, 1],
-    voxel_size=[0.2, 0.2, 8],
+    grid_size=[1024, 1024, 1],
+    voxel_size=[0.1, 0.1, 8],
     out_size_factor=4,
     dense_reg=1,
     gaussian_overlap=0.1,
@@ -166,7 +166,7 @@ test_cfg = dict(
     min_radius=[4, 12, 10, 1, 0.85, 0.175],
     score_threshold=0.1,
     out_size_factor=4,
-    voxel_size=[0.2, 0.2, 8],
+    voxel_size=[0.1, 0.1, 8],
     nms_type='circle',
     pre_max_size=1000,
     post_max_size=83,

@@ -225,7 +225,7 @@ class DetMVNuscEvaluator():
         gt_label_path = os.path.join("data/rope3d-kitti", "training", "label_2")
         results_path = "outputs"         
         pred_label_path = result2kitti(result_files["img_bbox"], results_path, dair_root, demo=False)
-        kitti_evaluation(pred_label_path, gt_label_path, metric_path="output/bev_depth_lss_r50_256x704_128x128_24e")
+        kitti_evaluation(pred_label_path, gt_label_path, metric_path="output/bev_depth_lss_r50_256x704_128x128_24e_ema")
 
     def _format_bbox(self, results, img_metas, jsonfile_prefix=None):
         """Convert the results to the standard format.

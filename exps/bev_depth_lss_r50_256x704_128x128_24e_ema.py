@@ -30,7 +30,7 @@ def main(args: Namespace) -> None:
         pl.seed_everything(args.seed)
 
     model = BEVDepthLightningModel(**vars(args))
-    checkpoint_callback = ModelCheckpoint(dirpath='./outputs/bev_depth_lss_r50_256x704_128x128_24e_ema/checkpoints', filename='{epoch}', every_n_epochs=10, save_last=True, save_top_k=-1)
+    checkpoint_callback = ModelCheckpoint(dirpath='./outputs/bev_depth_lss_r50_256x704_128x128_24e_ema/checkpoints', filename='{epoch}', every_n_epochs=5, save_last=True, save_top_k=-1)
     train_dataloader = model.train_dataloader()
     ema_callback = EMACallback(len(train_dataloader.dataset) * args.max_epochs)
     trainer = pl.Trainer.from_argparse_args(args, callbacks=[checkpoint_callback, ema_callback])
@@ -61,7 +61,7 @@ def run_cli():
     parser.set_defaults(
         profiler='simple',
         deterministic=False,
-        max_epochs=60,
+        max_epochs=50,
         accelerator='ddp',
         num_sanity_val_steps=0,
         gradient_clip_val=5,
