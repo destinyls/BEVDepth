@@ -5,12 +5,17 @@ import cv2
 
 import mmcv
 import numpy as np
+import pandas as pd
 from pyquaternion import Quaternion
 from tqdm import tqdm
+from scipy.stats import norm
 
 from scripts.vis_utils import *
+from scipy.stats import *
 
 import matplotlib.pyplot as plt
+import matplotlib.mlab as mlab
+import seaborn as sns 
 import numpy as np
 
 name2nuscenceclass = {
@@ -49,14 +54,17 @@ def get_annos(path):
     my_json = read_json(path)
     gt_names = []
     gt_boxes = []
+    gt_bbox2d = []
     for item in my_json:
         gt_names.append(item["type"].lower())
         x, y, z = float(item["3d_location"]["x"]), float(item["3d_location"]["y"]), float(item["3d_location"]["z"])
         h, w, l = float(item["3d_dimensions"]["h"]), float(item["3d_dimensions"]["w"]), float(item["3d_dimensions"]["l"])                                                            
         lidar_yaw = float(item["rotation"])
         gt_boxes.append([x, y, z, l, w, h, lidar_yaw])
+        gt_bbox2d.append([float(item["2d_box"]["xmin"]), float(item["2d_box"]["ymin"]), float(item["2d_box"]["xmax"]), float(item["2d_box"]["ymax"])])
     gt_boxes = np.array(gt_boxes)
-    return gt_names, gt_boxes
+    gt_bbox2d = np.array(gt_bbox2d)
+    return gt_names, gt_boxes, gt_bbox2d
 
 def load_data(dair_root, token):
     sample_id = token.split('/')[1].split('.')[0]
@@ -66,8 +74,8 @@ def load_data(dair_root, token):
     label_path = os.path.join(dair_root, "label", "camera", sample_id + ".json")
     r_velo2cam, t_velo2cam = get_velo2cam(virtuallidar_to_camera_path)
     P = get_P(camera_intrinsic_path)
-    gt_names, gt_boxes = get_annos(label_path)
-    return r_velo2cam, t_velo2cam, P, gt_names, gt_boxes, img_pth
+    gt_names, gt_boxes, gt_bbox2d = get_annos(label_path)
+    return r_velo2cam, t_velo2cam, P, gt_names, gt_boxes, gt_bbox2d, img_pth
 
 def cam2velo(r_velo2cam, t_velo2cam):
     Tr_velo2cam = np.eye(4)
@@ -112,13 +120,21 @@ def generate_info_dair(dair_root, split):
     infos = list()
     img_locs_list = list()
     ego_locs_list = list()
-
+    
+    bbox_depth = dict()
+    bbox_height = dict()
+    bbox_depth_list = []
     for sample_id in tqdm(split_list):
         token = "image/" + sample_id + ".jpg"
-        r_velo2cam, t_velo2cam, camera_intrinsic, gt_names, gt_boxes, img_pth = load_data(dair_root, token)
+        r_velo2cam, t_velo2cam, camera_intrinsic, gt_names, gt_boxes, gt_bbox2d, img_pth = load_data(dair_root, token)
         Tr_velo2cam = np.eye(4)
         Tr_velo2cam[:3,:3] = r_velo2cam
         Tr_velo2cam[:3,3] = t_velo2cam[:,0]
+        
+        cam_key = str(round(t_velo2cam[0, 0], 4))
+        if cam_key not in bbox_depth.keys():
+            bbox_depth[cam_key] = []
+            bbox_height[cam_key] = []
         
         info = dict()
         cam_info = dict()
@@ -171,7 +187,16 @@ def generate_info_dair(dair_root, split):
             img_loc = np.matmul(Tr_velo2cam, np.array([[loc[0],loc[1],loc[2], 1]]).T)            
             img_locs_list.append(img_loc[:3])
             ego_locs_list.append(loc[:,np.newaxis])
-            print(img_loc[:3].shape, loc[:,np.newaxis].shape)
+            
+            if category_name == "car":
+                xmin, ymin, xmax, ymax = gt_bbox2d[idx]
+                area = (ymax - ymin) * (xmax - xmin)
+                if area > 15000 or loc[2] < -2.0 or len(bbox_depth[cam_key]) > 10000:
+                    continue
+                bbox_depth[cam_key].append([[area, img_loc[2,0]]])
+                bbox_height[cam_key].append([[area, loc[2]]])
+                bbox_depth_list.append([[area, img_loc[2,0]]])
+                
             yaw_lidar = gt_box[6]
             rot_mat = np.array([[math.cos(yaw_lidar), -math.sin(yaw_lidar), 0], 
                                 [math.sin(yaw_lidar), math.cos(yaw_lidar), 0], 
@@ -200,29 +225,95 @@ def generate_info_dair(dair_root, split):
     ego_locs_array = np.concatenate(ego_locs_list, axis=1)
     
     print(img_locs_array.shape, ego_locs_array.shape)
-    plt.figure(figsize=(16, 8))
+    plt.figure(figsize=(8, 8))
     plt.scatter(img_locs_array[2, :], 
                 ego_locs_array[2, :],
-                c='red')
-    
-    print("depth mean & var: ", np.mean(img_locs_array[2, :]), np.var(img_locs_array[2, :]))
-    print("height mean & var: ", np.mean(ego_locs_array[2, :]), np.var(ego_locs_array[2, :]))
-    
+                c='blue')
     
     plt.xlabel('depth', fontdict={'weight': 'normal', 'size': 25})
     plt.ylabel('height', fontdict={'weight': 'normal', 'size': 25})
     plt.tick_params(labelsize=20)
     plt.savefig('distribution.png')
+    
+    print("depth mean & var: ", np.mean(img_locs_array[2, :]), np.var(img_locs_array[2, :]))
+    print("height mean & var: ", np.mean(ego_locs_array[2, :]), np.var(ego_locs_array[2, :]))
+    
+    total_num = img_locs_array.shape[1]
+    hist, bins = np.histogram(img_locs_array[2,:], bins=10, range=[0,200], weights=None, density=False)
+    hist = hist / total_num
 
+    plt.figure(figsize=(16, 7.5))
+    x = img_locs_array[2,:]
+    sns.set_palette("hls")
+    sns.histplot(x, color="r",bins=31, kde=True, legend=True)    
+    plt.title(r'Histogram of Depth: $\mu=75.45$, $\sigma=1258.95$', fontsize=25)
+    plt.xlabel('Depth', fontdict={'weight': 'normal', 'size': 25})
+    plt.ylabel('Count', fontdict={'weight': 'normal', 'size': 25})
+    plt.tick_params(labelsize=25)
+    plt.savefig('depth_hist.png')
+    
+    plt.figure(figsize=(16, 7.5))
+    x = ego_locs_array[2,:]
+    sns.set_palette("hls") 
+    sns.histplot(x, color="g", bins=31, kde=True, legend=True)
+    plt.title(r'Histogram of Height: $\mu=-0.87$, $\sigma=0.09$', fontsize=25)
+    plt.xlabel('Height', fontdict={'weight': 'normal', 'size': 25})
+    plt.ylabel('Count', fontdict={'weight': 'normal', 'size': 25})
+    plt.tick_params(labelsize=25)
+    plt.savefig('height_hist.png')
+    
+    scene1 = bbox_depth['-2.2854']
+    scene1_array = np.concatenate(scene1, axis=0)
+    
+    plt.figure(figsize=(9.0, 9.0))
+    plt.scatter(scene1_array[:, 0], 
+                scene1_array[:, 1],
+                c='lightcoral',
+                s=30,
+                marker='x',
+                label = 'origin focal')
+
+    plt.scatter(scene1_array[:, 0] * 0.5625,
+                scene1_array[:, 1],
+                c='royalblue',
+                s=30,
+                label = '0.75 x focal')
+    plt.legend(fontsize=20)
+    plt.xlabel('area', fontdict={'weight': 'normal', 'size': 25})
+    plt.ylabel('depth (m)', fontdict={'weight': 'normal', 'size': 25})
+    plt.tick_params(labelsize=20)
+    plt.savefig('depth_area.png')
+    
+    scene1 = bbox_height['-2.2854']
+    scene1_array = np.concatenate(scene1, axis=0)
+    plt.figure(figsize=(9.0, 9.0))
+    plt.scatter(scene1_array[:, 0], 
+                -1 * scene1_array[:, 1],
+                c='lightcoral',
+                s=30,
+                marker='x',
+                label = 'origin focal')
+
+    plt.scatter(scene1_array[:, 0] * 0.5625,
+                -1 * scene1_array[:, 1],
+                c='royalblue',
+                s=30,
+                label = '0.75 x focal')
+    plt.legend(fontsize=20)
+    plt.xlabel('area', fontdict={'weight': 'normal', 'size': 25})
+    plt.ylabel('height (m)', fontdict={'weight': 'normal', 'size': 25})
+    plt.tick_params(labelsize=20)
+    plt.savefig('height_area.png')
+    
     return infos
 
 def main():
     dair_root = "data/dair-v2x"
-    train_infos = generate_info_dair(dair_root, split='train')
+    # train_infos = generate_info_dair(dair_root, split='train')
     val_infos = generate_info_dair(dair_root, split='val')
     
-    mmcv.dump(train_infos, './data/dair-v2x/dair_12hz_infos_train.pkl')
-    mmcv.dump(val_infos, './data/dair-v2x/dair_12hz_infos_val.pkl')
+    # mmcv.dump(train_infos, './data/dair-v2x/dair_12hz_infos_train.pkl')
+    # mmcv.dump(val_infos, './data/dair-v2x/dair_12hz_infos_val.pkl')
 
 if __name__ == '__main__':
     main()
