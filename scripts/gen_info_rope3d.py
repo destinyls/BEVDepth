@@ -128,7 +128,7 @@ def generate_info_rope3d(rope3d_root, split='train', img_id=0):
     label_path = os.path.join(src_dir, "label_2")
     calib_path = os.path.join(src_dir, "calib")
     denorm_path = os.path.join(src_dir, "denorm")
-    split_txt = os.path.join(src_dir, "train.txt" if split=='train' else 'val.txt')
+    split_txt = os.path.join(src_dir, "train_hom.txt" if split=='train' else 'val_hom.txt')
     idx_list = [x.strip() for x in open(split_txt).readlines()]
     idx_list_valid = []
     
