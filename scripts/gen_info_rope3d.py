@@ -217,23 +217,8 @@ def main():
     train_infos = generate_info_rope3d(rope3d_root, split='train')
     val_infos = generate_info_rope3d(rope3d_root, split='val')
     
-    mmcv.dump(train_infos, './data/rope3d/rope3d_12hz_infos_val_hom_mini.pkl')
-    mmcv.dump(val_infos, './data/rope3d/rope3d_12hz_infos_val_mini.pkl')
-    
-    # train_infos = mmcv.load("./data/rope3d/rope3d_12hz_infos_train.pkl")
-    # val_infos = mmcv.load("./data/rope3d/rope3d_12hz_infos_val.pkl")
-
-    print("train_infos: ", len(train_infos))
-    print("val_infos: ", len(val_infos))
-    random.shuffle(train_infos)
-    random.shuffle(val_infos)
-    
-    train_infos = random.sample(train_infos, 2333)
-    val_infos = random.sample(val_infos, 1000)
-    
-    mmcv.dump(train_infos[:2333], './data/rope3d/rope3d_12hz_infos_train_mini.pkl')
-    mmcv.dump(train_infos[3000:4000], './data/rope3d/rope3d_12hz_infos_val_hom_mini.pkl')
-    mmcv.dump(val_infos[:1000], './data/rope3d/rope3d_12hz_infos_val_mini.pkl')
+    mmcv.dump(train_infos, './data/rope3d/rope3d_12hz_infos_train_hom.pkl')
+    mmcv.dump(val_infos, './data/rope3d/rope3d_12hz_infos_val_hom.pkl')
 
 if __name__ == '__main__':
     main()

@@ -142,7 +142,7 @@ bbox_coder = dict(
     max_num=500,
     score_threshold=0.1,
     out_size_factor=4,
-    voxel_size=[0.2, 0.2, 8],
+    voxel_size=[0.1, 0.1, 8],
     pc_range=[0, -51.2, -5, 104.4, 51.2, 3],
     code_size=9,
 )
