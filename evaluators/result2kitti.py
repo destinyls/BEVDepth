@@ -63,7 +63,7 @@ def read_label_bboxes(label_path, denorm_file):
 def kitti_evaluation(pred_label_path, gt_label_path, metric_path="metric"):
     pred_annos, image_ids = kitti.get_label_annos(pred_label_path, return_ids=True)
     gt_annos = kitti.get_label_annos(gt_label_path, image_ids=image_ids)
-    result, ret_dict = kitti_eval(gt_annos, pred_annos, ["Car", "Pedestrian", "Cyclist"], metric="R40")
+    result, ret_dict = kitti_eval(gt_annos, pred_annos, ["Car", "Pedestrian", "Cyclist", "Bus"], metric="R40")
     mAP_3d_moderate = ret_dict["KITTI/Car_3D_moderate_strict"]
     os.makedirs(os.path.join(metric_path, "R40"), exist_ok=True)
     with open(os.path.join(metric_path, "R40", 'epoch_result_{}.txt'.format(round(mAP_3d_moderate, 2))), "w") as f:

@@ -276,9 +276,9 @@ class NuscMVDetDataset(Dataset):
         self.image_rectify = ImageRectify(image_shape=[self.ida_aug_conf['H'],self.ida_aug_conf['W']])
         self.visual_tool = ProduceHeightMap(resolution=0.05)
 
-        self.ratio_range = [1.0, 0.08]
-        self.roll_range = [0.0, 1.67]
-        self.pitch_range = [0.0, 0.67]
+        self.ratio_range = [0.85, 1.15]
+        self.roll_range = [-4.0, 4.0]
+        self.pitch_range = [-2.0, 2.0]
 
     def _get_sample_indices(self):
         """Load annotations from ann_file.
@@ -329,12 +329,12 @@ class NuscMVDetDataset(Dataset):
     def sample_intrin_extrin_augmentation(self, intrin_mat, sweepego2sweepsensor):
         intrin_mat, sweepego2sweepsensor = intrin_mat.numpy(), sweepego2sweepsensor.numpy()
         # rectify intrin_mat
-        ratio = np.random.normal(self.ratio_range[0], self.ratio_range[1])
+        ratio = np.random.uniform(self.ratio_range[0], self.ratio_range[1])
         intrin_mat_rectify = intrin_mat.copy()
         intrin_mat_rectify[:2,:2] = intrin_mat[:2,:2] * ratio
         
         # rectify sweepego2sweepsensor by roll
-        roll = np.random.normal(self.roll_range[0], self.roll_range[1])
+        roll = np.random.uniform(self.roll_range[0], self.roll_range[1])
         roll_rad = self.degree2rad(roll)
         rectify_roll = np.array([[math.cos(roll_rad), -math.sin(roll_rad), 0, 0], 
                                  [math.sin(roll_rad), math.cos(roll_rad), 0, 0], 
@@ -343,7 +343,7 @@ class NuscMVDetDataset(Dataset):
         sweepego2sweepsensor_rectify_roll = np.matmul(rectify_roll, sweepego2sweepsensor)
         
         # rectify sweepego2sweepsensor by pitch
-        pitch = np.random.normal(self.pitch_range[0], self.pitch_range[1])
+        pitch = np.random.uniform(self.pitch_range[0], self.pitch_range[1])
         pitch_rad = self.degree2rad(pitch)
         rectify_pitch = np.array([[1, 0, 0, 0],
                                   [0,math.cos(pitch_rad), -math.sin(pitch_rad), 0], 
@@ -390,7 +390,7 @@ class NuscMVDetDataset(Dataset):
 
     def sample_bda_augmentation(self):
         """Generate bda augmentation values based on bda_config."""
-        if self.is_train:
+        if self.is_train and False:
             rotate_bda = np.random.uniform(*self.bda_aug_conf['rot_lim'])
             scale_bda = np.random.uniform(*self.bda_aug_conf['scale_lim'])
             flip_dx = np.random.uniform() < self.bda_aug_conf['flip_dx_ratio']
@@ -480,7 +480,7 @@ class NuscMVDetDataset(Dataset):
                     cam_info[cam]['calibrated_sensor']['camera_intrinsic'])
                 sweepego2sweepsensor = sweepsensor2sweepego.inverse()
                 
-                if self.is_train and random.random() < 0.5 and False:
+                if self.is_train and random.random() < 0.5:
                     intrin_mat, sweepego2sweepsensor, ratio, roll, transform_pitch = self.sample_intrin_extrin_augmentation(intrin_mat, sweepego2sweepsensor)
                     img = img_intrin_extrin_transform(img, ratio, roll, transform_pitch, intrin_mat.numpy())
                 '''
