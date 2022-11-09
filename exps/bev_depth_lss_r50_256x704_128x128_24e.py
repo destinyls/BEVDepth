@@ -495,7 +495,7 @@ def run_cli():
     parser.set_defaults(
         profiler='simple',
         deterministic=False,
-        max_epochs=120,
+        max_epochs=140,
         accelerator='ddp',
         num_sanity_val_steps=0,
         gradient_clip_val=5,

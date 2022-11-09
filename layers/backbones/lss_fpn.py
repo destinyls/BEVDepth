@@ -325,11 +325,24 @@ class LSSFPN(nn.Module):
         d_coords = torch.arange(*self.d_bound,
                                 dtype=torch.float).view(-1, 1,
                                                         1).expand(-1, fH, fW)
-        '''                     
+        # SID
         d_coords = np.arange(self.d_bound[2]) / self.d_bound[2] * (math.log(self.d_bound[1]) - math.log(self.d_bound[0]))
         d_coords = np.exp(d_coords + math.log(self.d_bound[0]))
         d_coords = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
 
+        # LID
+        delta = 2 * (self.d_bound[1] - self.d_bound[0]) / (self.d_bound[2] * (1 + self.d_bound[2]))
+        d_coords = ((np.arange(0, self.d_bound[2], 1) + 0.5) * 2)**2
+        d_coords = (d_coords - 1) * delta / 8 + self.d_bound[0]
+        d_coords = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
+        '''
+        # PID
+        alpha = 1.5
+        d_coords = np.arange(self.d_bound[2]) / self.d_bound[2]
+        d_coords = np.power(d_coords, alpha)
+        d_coords = self.d_bound[0] + d_coords * (self.d_bound[1] - self.d_bound[0])
+        d_coords = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
+        
         D, _, _ = d_coords.shape
         x_coords = torch.linspace(0, ogfW - 1, fW, dtype=torch.float).view(
             1, 1, fW).expand(D, fH, fW)
