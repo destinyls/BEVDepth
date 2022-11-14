@@ -84,12 +84,12 @@ if __name__ == '__main__':
         img_poins = np.matmul(P, camera_points.T)
         img_poins = img_poins[:2, :] / img_poins[2, :]
         
-        img_shape, min_dist = (1080, 1920), 3
+        img_shape, min_dist = (1080, 1920), -1
         mask = np.ones(depths.shape[0], dtype=bool)
         mask = np.logical_and(mask, depths > min_dist)
-        mask = np.logical_and(mask, img_poins[0, :] > 1)
+        mask = np.logical_and(mask, img_poins[0, :] > 0)
         mask = np.logical_and(mask, img_poins[0, :] < img_shape[1] - 1)
-        mask = np.logical_and(mask, img_poins[1, :] > 1)
+        mask = np.logical_and(mask, img_poins[1, :] > 0)
         mask = np.logical_and(mask, img_poins[1, :] < img_shape[0] - 1)
         img_poins = img_poins[:, mask].astype(np.int32)
         depths = depths[mask]
@@ -105,26 +105,25 @@ if __name__ == '__main__':
         empty_img = np.zeros_like(img)
         
         virtual_height = -1 * virtual_height
-        virtual_height -= 8.0
+        # virtual_height -= 8.0
         virtual_height -= np.min(virtual_height)
+        virtual_height -= 20.8
+        print(np.min(virtual_height), np.max(virtual_height))
+
         for i in range(img_poins.shape[1]):
-            if depths[i] < 80:
-                depth_color = (255-3*depths[i], 0, 3*depths[i])
+            if virtual_height[i] < 0.0:
+                depth_color = (255 - 2 * virtual_height[i], 0, 70)
+            elif virtual_height[i] < 2.5:
+                depth_color = (0.0,  10 * virtual_height[i],  180 + 80*virtual_height[i])
             else:
-                depth_color = (255-3*depths[i], depths[i], 3*depths[i])
+                depth_color = (0.0,  30 * virtual_height[i],  150 + 80*virtual_height[i])
+
             
-            print(np.min(virtual_height), np.max(virtual_height))
-            if virtual_height[i] < 200:
-                depth_color = (255-10*virtual_height[i], 0, 5*virtual_height[i])
-            else:
-                depth_color = (255-5*virtual_height[i], 5*virtual_height[i], 5*virtual_height[i])
-            
-            height_color = virtual_height[i]
-            # img = cv2.circle(img, (img_poins[0,i], img_poins[1,i]), radius=2, color=depth_color, thickness=-1) 
-            # empty_img = cv2.circle(empty_img, (img_poins[0,i], img_poins[1,i]), radius=2, color=depth_color, thickness=-1) 
+            img = cv2.circle(img, (img_poins[0,i], img_poins[1,i]), radius=20, color=depth_color, thickness=-1) 
+            # empty_img = cv2.circle(empty_img, (img_poins[0,i], img_poins[1,i]), radius=8, color=depth_color, thickness=-1) 
 
         cv2.imwrite("demo.jpg", img)
-        cv2.imwrite("empty_demo.jpg", empty_img)
+        # cv2.imwrite("empty_demo.jpg", empty_img)
         
         break
 

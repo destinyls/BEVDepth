@@ -114,6 +114,33 @@ def get_denorm(rotation_matrix, translation):
     
     return denorm
 
+def degree2rad(degree):
+    return degree * np.pi / 180
+
+def sample_intrin_extrin_augmentation(sweepego2sweepsensor, roll_range=[0.0, 2.67], pitch_range=[0.0, 2.67]):
+        # rectify sweepego2sweepsensor by roll
+        # roll = np.random.normal(roll_range[0], roll_range[1])
+        # roll = np.random.normal(roll_range[0], roll_range[1])
+        roll = np.random.uniform(-5.0, 5.0)
+        roll_rad = degree2rad(roll)
+        rectify_roll = np.array([[math.cos(roll_rad), -math.sin(roll_rad), 0, 0], 
+                                 [math.sin(roll_rad), math.cos(roll_rad), 0, 0], 
+                                 [0, 0, 1, 0],
+                                 [0, 0, 0, 1]])
+        sweepego2sweepsensor_rectify_roll = np.matmul(rectify_roll, sweepego2sweepsensor)
+        
+        # rectify sweepego2sweepsensor by pitch
+        # pitch = np.random.normal(pitch_range[0], pitch_range[1])
+        pitch = np.random.uniform(-5.0, 5.0)
+        pitch_rad = degree2rad(pitch)
+        rectify_pitch = np.array([[1, 0, 0, 0],
+                                  [0,math.cos(pitch_rad), -math.sin(pitch_rad), 0], 
+                                  [0,math.sin(pitch_rad), math.cos(pitch_rad), 0],
+                                  [0, 0, 0, 1]])
+        sweepego2sweepsensor_rectify_pitch = np.matmul(rectify_pitch, sweepego2sweepsensor_rectify_roll)
+        return sweepego2sweepsensor_rectify_pitch
+
+
 def generate_info_dair(dair_root, split):    
     infos = mmcv.load("scripts/single-infrastructure-split-data.json")
     split_list = infos[split]
@@ -121,8 +148,7 @@ def generate_info_dair(dair_root, split):
     img_locs_list = list()
     ego_locs_list = list()
     
-    bbox_depth = dict()
-    bbox_height = dict()
+    bbox_depth, bbox_height = dict(), dict()
     bbox_depth_list = []
     for sample_id in tqdm(split_list):
         token = "image/" + sample_id + ".jpg"
@@ -185,16 +211,24 @@ def generate_info_dair(dair_root, split):
             loc = gt_box[:3]    # need to certify
             
             img_loc = np.matmul(Tr_velo2cam, np.array([[loc[0],loc[1],loc[2], 1]]).T)            
+            image_loc = np.matmul(camera_intrinsic, img_loc[:3,:])
+            image_loc = image_loc[:2,0] / image_loc[2,0]
+            
+            Tr_velo2cam_rectify = sample_intrin_extrin_augmentation(Tr_velo2cam)
+            img_loc_rectify = np.matmul(Tr_velo2cam_rectify, np.array([[loc[0],loc[1],loc[2], 1]]).T)   
+            image_loc_rectify = np.matmul(camera_intrinsic, img_loc_rectify[:3,:])
+            image_loc_rectify = image_loc_rectify[:2,0] / image_loc_rectify[2,0]
+            
             img_locs_list.append(img_loc[:3])
             ego_locs_list.append(loc[:,np.newaxis])
             
             if category_name == "car":
                 xmin, ymin, xmax, ymax = gt_bbox2d[idx]
                 area = (ymax - ymin) * (xmax - xmin)
-                if area > 15000 or loc[2] < -2.0 or len(bbox_depth[cam_key]) > 10000:
+                if area > 15000 or loc[2] < -2.0 or len(bbox_depth[cam_key]) > 20000:
                     continue
-                bbox_depth[cam_key].append([[area, img_loc[2,0]]])
-                bbox_height[cam_key].append([[area, loc[2]]])
+                bbox_depth[cam_key].append([[area, img_loc[2,0], image_loc[1], image_loc_rectify[1]]])
+                bbox_height[cam_key].append([[area, loc[2], image_loc[1], image_loc_rectify[1]]])
                 bbox_depth_list.append([[area, img_loc[2,0]]])
                 
             yaw_lidar = gt_box[6]
@@ -235,75 +269,158 @@ def generate_info_dair(dair_root, split):
     plt.tick_params(labelsize=20)
     plt.savefig('distribution.png')
     
+        
     print("depth mean & var: ", np.mean(img_locs_array[2, :]), np.var(img_locs_array[2, :]))
     print("height mean & var: ", np.mean(ego_locs_array[2, :]), np.var(ego_locs_array[2, :]))
-    
-    total_num = img_locs_array.shape[1]
-    hist, bins = np.histogram(img_locs_array[2,:], bins=10, range=[0,200], weights=None, density=False)
-    hist = hist / total_num
 
     plt.figure(figsize=(16, 7.5))
     x = img_locs_array[2,:]
     sns.set_palette("hls")
     sns.histplot(x, color="r",bins=31, kde=True, legend=True)    
-    plt.title(r'Histogram of Depth: $\mu=75.45$, $\sigma=1258.95$', fontsize=25)
+    # plt.title(r'$\mu=75.45$, $\sigma=1258.95$', fontsize=25)
     plt.xlabel('Depth', fontdict={'weight': 'normal', 'size': 25})
     plt.ylabel('Count', fontdict={'weight': 'normal', 'size': 25})
     plt.tick_params(labelsize=25)
+    ax = plt.gca()
+    bwith = 3
+    ax.spines['bottom'].set_linewidth(bwith)
+    ax.spines['left'].set_linewidth(bwith)
+    ax.spines['top'].set_linewidth(bwith)
+    ax.spines['right'].set_linewidth(bwith)   
     plt.savefig('depth_hist.png')
     
     plt.figure(figsize=(16, 7.5))
     x = ego_locs_array[2,:]
     sns.set_palette("hls") 
     sns.histplot(x, color="g", bins=31, kde=True, legend=True)
-    plt.title(r'Histogram of Height: $\mu=-0.87$, $\sigma=0.09$', fontsize=25)
+    # plt.title(r'$\mu=-0.87$, $\sigma=0.09$', fontsize=25)
     plt.xlabel('Height', fontdict={'weight': 'normal', 'size': 25})
     plt.ylabel('Count', fontdict={'weight': 'normal', 'size': 25})
     plt.tick_params(labelsize=25)
+    ax = plt.gca()
+    bwith = 3
+    ax.spines['bottom'].set_linewidth(bwith)
+    ax.spines['left'].set_linewidth(bwith)
+    ax.spines['top'].set_linewidth(bwith)
+    ax.spines['right'].set_linewidth(bwith)   
     plt.savefig('height_hist.png')
     
     scene1 = bbox_depth['-2.2854']
     scene1_array = np.concatenate(scene1, axis=0)
     
-    plt.figure(figsize=(9.0, 9.0))
+    plt.figure(figsize=(13.5, 11.5))
     plt.scatter(scene1_array[:, 0], 
                 scene1_array[:, 1],
                 c='lightcoral',
-                s=30,
+                s=50,
                 marker='x',
                 label = 'origin focal')
 
     plt.scatter(scene1_array[:, 0] * 0.5625,
                 scene1_array[:, 1],
                 c='royalblue',
-                s=30,
+                s=50,
+                alpha = 1.0,
                 label = '0.75 x focal')
-    plt.legend(fontsize=20)
-    plt.xlabel('area', fontdict={'weight': 'normal', 'size': 25})
-    plt.ylabel('depth (m)', fontdict={'weight': 'normal', 'size': 25})
-    plt.tick_params(labelsize=20)
+    plt.legend(fontsize=45, markerscale=2.0)
+    plt.xlabel('box area', fontdict={'weight': 'normal', 'size': 45})
+    plt.ylabel('depth (m)', fontdict={'weight': 'normal', 'size': 45})
+    plt.tick_params(labelsize=35)
+    
+    ax = plt.gca()
+    bwith = 3
+    ax.spines['bottom'].set_linewidth(bwith)
+    ax.spines['left'].set_linewidth(bwith)
+    ax.spines['top'].set_linewidth(bwith)
+    ax.spines['right'].set_linewidth(bwith)   
     plt.savefig('depth_area.png')
     
     scene1 = bbox_height['-2.2854']
     scene1_array = np.concatenate(scene1, axis=0)
-    plt.figure(figsize=(9.0, 9.0))
+    plt.figure(figsize=(13.5, 11.5))
     plt.scatter(scene1_array[:, 0], 
                 -1 * scene1_array[:, 1],
                 c='lightcoral',
-                s=30,
+                s=50,
                 marker='x',
                 label = 'origin focal')
 
     plt.scatter(scene1_array[:, 0] * 0.5625,
                 -1 * scene1_array[:, 1],
                 c='royalblue',
-                s=30,
+                s=50,
+                alpha = 1.0,
                 label = '0.75 x focal')
-    plt.legend(fontsize=20)
-    plt.xlabel('area', fontdict={'weight': 'normal', 'size': 25})
-    plt.ylabel('height (m)', fontdict={'weight': 'normal', 'size': 25})
-    plt.tick_params(labelsize=20)
+    plt.legend(fontsize=45, markerscale=2.0)
+    plt.xlabel('box area', fontdict={'weight': 'normal', 'size': 45})
+    plt.ylabel('height (m)', fontdict={'weight': 'normal', 'size': 45})
+    plt.tick_params(labelsize=35)
+    
+    ax = plt.gca()
+    ax.spines['bottom'].set_linewidth(bwith)
+    ax.spines['left'].set_linewidth(bwith)
+    ax.spines['top'].set_linewidth(bwith)
+    ax.spines['right'].set_linewidth(bwith)  
+    
     plt.savefig('height_area.png')
+    
+    ##################### depth ###########################
+    scene1 = bbox_depth['-2.2854']
+    scene1_array = np.concatenate(scene1, axis=0)
+    plt.figure(figsize=(13.5, 11.5))
+    plt.scatter(scene1_array[:, 2], 
+                scene1_array[:, 1],
+                c='lightcoral',
+                s=50,
+                marker='x',
+                label = 'Original')
+    
+    plt.scatter(scene1_array[:, 3],
+                scene1_array[:, 1],
+                c='royalblue',
+                s=50,
+                alpha = 1.0,
+                label = 'Noisy')
+    plt.legend(fontsize=45, markerscale=2.5)
+    plt.xlabel('v-coordinate of image', fontdict={'weight': 'normal', 'size': 45})
+    plt.ylabel('depth (m)', fontdict={'weight': 'normal', 'size': 45})
+    plt.tick_params(labelsize=35)
+    
+    ax = plt.gca()
+    ax.spines['bottom'].set_linewidth(bwith)
+    ax.spines['left'].set_linewidth(bwith)
+    ax.spines['top'].set_linewidth(bwith)
+    ax.spines['right'].set_linewidth(bwith)  
+    plt.savefig('depth_v.png')
+    
+    ##################### height ###########################
+    scene1 = bbox_height['-2.2854']
+    scene1_array = np.concatenate(scene1, axis=0)
+    plt.figure(figsize=(13.5, 11.5))
+    plt.scatter(scene1_array[:, 2], 
+                -1 * scene1_array[:, 1],
+                c='lightcoral',
+                s=50,
+                marker='x',
+                label = 'Original')
+    plt.scatter(scene1_array[:, 3],
+                -1 * scene1_array[:, 1],
+                c='royalblue',
+                s=50,
+                alpha = 1.0,
+                label = 'Noisy')
+    plt.legend(fontsize=45, markerscale=2.5)
+    plt.xlabel('v-coordinate of image', fontdict={'weight': 'normal', 'size': 45})
+    plt.ylabel('height (m)', fontdict={'weight': 'normal', 'size': 45})
+    plt.tick_params(labelsize=35)
+    
+    ax = plt.gca()
+    ax.spines['bottom'].set_linewidth(bwith)
+    ax.spines['left'].set_linewidth(bwith)
+    ax.spines['top'].set_linewidth(bwith)
+    ax.spines['right'].set_linewidth(bwith)  
+    
+    plt.savefig('height_v.png')
     
     return infos
 
