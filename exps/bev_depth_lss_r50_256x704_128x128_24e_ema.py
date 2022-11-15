@@ -1,6 +1,6 @@
 # Copyright (c) Megvii Inc. All rights reserved.
 from argparse import ArgumentParser, Namespace
-
+import os
 import pytorch_lightning as pl
 import torch
 import torch.nn.parallel
@@ -60,12 +60,12 @@ def run_cli():
     parser.set_defaults(
         profiler='simple',
         deterministic=False,
-        max_epochs=120,
+        max_epochs=150,
         accelerator='ddp',
         num_sanity_val_steps=0,
         gradient_clip_val=5,
-        # limit_val_batches=0,
-        enable_checkpointing=False,
+        limit_val_batches=0,
+        enable_checkpointing=True,
         precision=32,
         default_root_dir='./outputs/bev_depth_lss_r50_256x704_128x128_24e_ema')
     args = parser.parse_args()

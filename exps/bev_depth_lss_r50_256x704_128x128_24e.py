@@ -38,8 +38,8 @@ img_conf = dict(img_mean=[123.675, 116.28, 103.53],
                 to_rgb=True)
 
 backbone_conf = {
-    'x_bound': [0, 102.4, 0.8],
-    'y_bound': [-51.2, 51.2, 0.8],
+    'x_bound': [0, 102.4, 0.4],
+    'y_bound': [-51.2, 51.2, 0.4],
     'z_bound': [-5, 3, 8],
      # 'd_bound': [-3.0, 5.0, 0.1],
     'd_bound': [2.5, 10.5, 80],
@@ -142,15 +142,15 @@ bbox_coder = dict(
     max_num=500,
     score_threshold=0.1,
     out_size_factor=4,
-    voxel_size=[0.2, 0.2, 8],
+    voxel_size=[0.1, 0.1, 8],
     pc_range=[0, -51.2, -5, 104.4, 51.2, 3],
     code_size=9,
 )
 
 train_cfg = dict(
     point_cloud_range=[0, -51.2, -5, 102.4, 51.2, 3],
-    grid_size=[512, 512, 1],
-    voxel_size=[0.2, 0.2, 8],
+    grid_size=[1024, 1024, 1],
+    voxel_size=[0.1, 0.1, 8],
     out_size_factor=4,
     dense_reg=1,
     gaussian_overlap=0.1,
@@ -166,7 +166,7 @@ test_cfg = dict(
     min_radius=[4, 12, 10, 1, 0.85, 0.175],
     score_threshold=0.1,
     out_size_factor=4,
-    voxel_size=[0.2, 0.2, 8],
+    voxel_size=[0.1, 0.1, 8],
     nms_type='circle',
     pre_max_size=1000,
     post_max_size=83,
@@ -495,7 +495,7 @@ def run_cli():
     parser.set_defaults(
         profiler='simple',
         deterministic=False,
-        max_epochs=140,
+        max_epochs=150,
         accelerator='ddp',
         num_sanity_val_steps=0,
         gradient_clip_val=5,
