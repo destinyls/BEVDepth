@@ -759,6 +759,7 @@ def collate_fn(data, is_return_depth=False):
     gt_labels_batch = list()
     img_metas_batch = list()
     depth_labels_batch = list()
+    tokens_batch = list()
     for iter_data in data:
         (
             sweep_imgs,
@@ -789,6 +790,8 @@ def collate_fn(data, is_return_depth=False):
         img_metas_batch.append(img_metas)
         gt_boxes_batch.append(gt_boxes)
         gt_labels_batch.append(gt_labels)
+        tokens_batch.append(torch.tensor(int(img_metas["token"].split('/')[1].split('.')[0])))
+    
     mats_dict = dict()
     mats_dict['sensor2ego_mats'] = torch.stack(sensor2ego_mats_batch)
     mats_dict['intrin_mats'] = torch.stack(intrin_mats_batch)
@@ -797,6 +800,8 @@ def collate_fn(data, is_return_depth=False):
     mats_dict['sensor2sensor_mats'] = torch.stack(sensor2sensor_mats_batch)
     mats_dict['sensor2virtual_mats'] = torch.stack(sensor2virtual_mats_batch)
     mats_dict['bda_mat'] = torch.stack(bda_mat_batch)
+    mats_dict['token'] = torch.stack(tokens_batch)
+
     ret_list = [
         torch.stack(imgs_batch),
         mats_dict,

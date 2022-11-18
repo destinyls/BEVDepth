@@ -38,11 +38,11 @@ img_conf = dict(img_mean=[123.675, 116.28, 103.53],
                 to_rgb=True)
 
 backbone_conf = {
-    'x_bound': [0, 102.4, 0.4],
-    'y_bound': [-51.2, 51.2, 0.4],
+    'x_bound': [0, 102.4, 0.8],
+    'y_bound': [-51.2, 51.2, 0.8],
     'z_bound': [-5, 3, 8],
      # 'd_bound': [-3.0, 5.0, 0.1],
-    'd_bound': [2.5, 10.5, 80],
+    'd_bound': [2.5, 6.5, 80],
     'final_dim':
     final_dim,
     'output_channels':
@@ -142,15 +142,15 @@ bbox_coder = dict(
     max_num=500,
     score_threshold=0.1,
     out_size_factor=4,
-    voxel_size=[0.1, 0.1, 8],
+    voxel_size=[0.2, 0.2, 8],
     pc_range=[0, -51.2, -5, 104.4, 51.2, 3],
     code_size=9,
 )
 
 train_cfg = dict(
     point_cloud_range=[0, -51.2, -5, 102.4, 51.2, 3],
-    grid_size=[1024, 1024, 1],
-    voxel_size=[0.1, 0.1, 8],
+    grid_size=[512, 512, 1],
+    voxel_size=[0.2, 0.2, 8],
     out_size_factor=4,
     dense_reg=1,
     gaussian_overlap=0.1,
@@ -166,7 +166,7 @@ test_cfg = dict(
     min_radius=[4, 12, 10, 1, 0.85, 0.175],
     score_threshold=0.1,
     out_size_factor=4,
-    voxel_size=[0.1, 0.1, 8],
+    voxel_size=[0.2, 0.2, 8],
     nms_type='circle',
     pre_max_size=1000,
     post_max_size=83,
@@ -242,9 +242,10 @@ class BEVDepthLightningModel(LightningModule):
 
     def training_step(self, batch):
         if len(batch) == 7:
-            (sweep_imgs, mats, _, _, gt_boxes, gt_labels, depth_labels) = batch
+            (sweep_imgs, mats, _, img_metas, gt_boxes, gt_labels, depth_labels) = batch
         else:
-            (sweep_imgs, mats, _, _, gt_boxes, gt_labels) = batch
+            (sweep_imgs, mats, _, img_metas, gt_boxes, gt_labels) = batch
+        print("mats: ", mats.keys(), img_metas)
         if torch.cuda.is_available():
             for key, value in mats.items():
                 mats[key] = value.cuda()

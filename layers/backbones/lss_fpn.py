@@ -1,5 +1,6 @@
 # Copyright (c) Megvii Inc. All rights reserved.
 import cv2
+import os
 import math
 import numpy as np
 
@@ -374,7 +375,8 @@ class LSSFPN(nn.Module):
         ratio = ratio.view(batch_size, num_cams, ratio.shape[2], ratio.shape[3], ratio.shape[4], 1, 1).repeat(1, 1, 1, 1, 1, 4, 1)
         points = points_virtual * ratio
         points[:, :, :, :, :, 3, :] = 1
-        combine_ego = sensor2ego_mat.matmul(torch.inverse(sensor2virtual_mat))
+        # combine_ego = sensor2ego_mat.matmul(torch.inverse(sensor2virtual_mat))
+        combine_ego = torch.inverse(sensor2virtual_mat)
         points = combine_ego.view(batch_size, num_cams, 1, 1, 1, 4,
                               4).matmul(points)
         return points
@@ -410,6 +412,8 @@ class LSSFPN(nn.Module):
         points = self.frustum
         ida_mat = ida_mat.view(batch_size, num_cams, 1, 1, 1, 4, 4)
         points = ida_mat.inverse().matmul(points.unsqueeze(-1))
+        points_pixel = points.squeeze()[:,:,:,:,:2]
+
         points = self.height2localtion(points, sensor2ego_mat, sensor2virtual_mat, intrin_mat, reference_heights) 
         # points = self.depth2location(points, sensor2ego_mat, intrin_mat)        
         if bda_mat is not None:
@@ -418,7 +422,7 @@ class LSSFPN(nn.Module):
             points = (bda_mat @ points).squeeze(-1)
         else:
             points = points.squeeze(-1)
-        return points[..., :3]
+        return points[..., :3], points_pixel
 
     def get_cam_feats(self, imgs):
         """Get feature maps from images."""
@@ -495,7 +499,7 @@ class LSSFPN(nn.Module):
             img_feat_with_depth.shape[4],
         )
         
-        geom_xyz = self.get_geometry(
+        geom_xyz, points_pixel = self.get_geometry(
             mats_dict['sensor2ego_mats'][:, sweep_index, ...],
             mats_dict['sensor2virtual_mats'][:, sweep_index, ...],
             mats_dict['intrin_mats'][:, sweep_index, ...],
@@ -503,6 +507,27 @@ class LSSFPN(nn.Module):
             mats_dict['reference_heights'][:, sweep_index, ...],
             mats_dict.get('bda_mat', None),
         )
+        
+        geom_xyz_analysis = geom_xyz.squeeze()
+        depth_analysis = depth.unsqueeze(-1)
+        print("geom_xyz_analysis: ", geom_xyz_analysis.shape)
+        print("depth_analysis: ", depth_analysis.shape)
+        weighted_geom_xyz_analysis = geom_xyz_analysis * depth_analysis
+        print("weighted_geom_xyz_analysis: ", weighted_geom_xyz_analysis.shape)
+        points_analysis = torch.sum(weighted_geom_xyz_analysis, dim=1)
+        points_analysis = torch.cat([points_pixel[:,0,...], points_analysis], dim=-1)
+        print("points_pixel: ", points_pixel[:,0,...])
+        print("points_analysis: ", points_analysis.shape)
+        print("mats_dict: ", mats_dict["token"])
+        
+        os.makedirs("cache_points/height", exist_ok=True)
+        tokens_np = mats_dict["token"].cpu().numpy()
+        for i in range(tokens_np.shape[0]):
+            token = tokens_np[i]
+            print(token)
+            token_filename = os.path.join("cache_points/height", "{:06d}".format(token) + ".npy")
+            np.save(token_filename, points_analysis[i].cpu().numpy())
+        
         img_feat_with_depth = img_feat_with_depth.permute(0, 1, 3, 4, 5, 2)
         geom_xyz = ((geom_xyz - (self.voxel_coord - self.voxel_size / 2.0)) /
                     self.voxel_size).int()
