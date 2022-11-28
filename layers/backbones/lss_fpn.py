@@ -318,18 +318,12 @@ class LSSFPN(nn.Module):
                                                         1).expand(-1, fH, fW)
         '''
         # height SID style
-        '''
-        range_num1 = int(self.d_bound[2] * abs(self.d_bound[0]) / (self.d_bound[1] - self.d_bound[0]))
-        range_num2 = self.d_bound[2] - range_num1
-        
-        d_coords1 = np.arange(range_num1) / range_num1 * (math.log(abs(self.d_bound[0])) - math.log(1e-3))
-        d_coords1 = -1 * np.flipud(np.exp(d_coords1 + math.log(1e-3)))
-        d_coords2 = np.arange(range_num2) / range_num2 * (math.log(abs(self.d_bound[1])) - math.log(1e-3))
-        d_coords2 = np.exp(d_coords2 + math.log(1e-3))
-        d_coords = np.concatenate([d_coords1, d_coords2], axis=0)
+        d_coords = np.arange(self.d_bound[2]) / self.d_bound[2] * (math.log(self.d_bound[1]) - math.log(self.d_bound[0]))
+        d_coords = np.exp(d_coords + math.log(self.d_bound[0]))
         d_coords = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
-        '''
+        d_coords = d_coords - 5.5
         # height LID style
+        '''
         min_height, min_num = 0.5, 40
         lid_num = self.d_bound[2] - 2 * min_num
         range_num1 = int(lid_num * abs(self.d_bound[0]) / (self.d_bound[1] - self.d_bound[0]))
@@ -350,7 +344,7 @@ class LSSFPN(nn.Module):
         mid_coords1[-1], mid_coords2[0] = mid_coords1[-2] / 2, mid_coords2[1] / 2
         d_coords = np.concatenate([d_coords1, mid_coords1, mid_coords2, d_coords2], axis=0)
         d_coords = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
-
+        '''
         D, _, _ = d_coords.shape
         x_coords = torch.linspace(0, ogfW - 1, fW, dtype=torch.float).view(
             1, 1, fW).expand(D, fH, fW)
@@ -365,12 +359,10 @@ class LSSFPN(nn.Module):
     
     def height2localtion(self, points, sensor2ego_mat, sensor2virtual_mat, intrin_mat, reference_heights):
         batch_size, num_cams, _, _ = sensor2ego_mat.shape
-        '''
         reference_heights = reference_heights.view(batch_size, num_cams, 1, 1, 1, 1,
                                                    1).repeat(1, 1, points.shape[2], points.shape[3], points.shape[4], 1, 1)
-        height = points[:, :, :, :, :, 2, :] + reference_heights[:, :, :, :, :, 0, :]
-        '''
-        height = points[:, :, :, :, :, 2, :]
+        height = -1 * points[:, :, :, :, :, 2, :] + reference_heights[:, :, :, :, :, 0, :]
+        
         points_const = points.clone()
         points_const[:, :, :, :, :, 2, :] = 10
         points_const = torch.cat(

@@ -34,9 +34,9 @@ img_conf = dict(img_mean=[123.675, 116.28, 103.53],
 backbone_conf = {
     'x_bound': [-51.2, 51.2, 0.8],
     'y_bound': [-51.2, 51.2, 0.8],
-    'z_bound': [-5, 3, 8],
+    'z_bound': [-4, 4, 8],
     # 'd_bound': [-3.0, 5.0, 0.05],
-    'd_bound': [-7.0, 7.0, 200],
+    'd_bound': [3.5, 9.5, 180],
     'final_dim':
     final_dim,
     'output_channels':
