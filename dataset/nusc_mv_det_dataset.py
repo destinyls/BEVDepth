@@ -620,6 +620,9 @@ class NuscMVDetDataset(Dataset):
         ego2global_translation = np.mean([
             info['cam_infos'][cam]['ego_pose']['translation'] for cam in cams
         ], 0)
+        print("ego2global_translation: ", ego2global_translation)
+        print("ego2global_rotation: ", ego2global_rotation)
+        
         trans = -np.array(ego2global_translation)
         rot = Quaternion(ego2global_rotation).inverse
         gt_boxes = list()

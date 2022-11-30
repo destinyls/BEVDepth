@@ -140,6 +140,22 @@ def sample_intrin_extrin_augmentation(sweepego2sweepsensor, roll_range=[0.0, 2.6
         sweepego2sweepsensor_rectify_pitch = np.matmul(rectify_pitch, sweepego2sweepsensor_rectify_roll)
         return sweepego2sweepsensor_rectify_pitch
 
+def get_lidar_3d_8points(obj_size, yaw_lidar, center_lidar):
+    center_lidar = [center_lidar[0], center_lidar[1], center_lidar[2]]
+    lidar_r = np.matrix(
+        [[math.cos(yaw_lidar), -math.sin(yaw_lidar), 0], [math.sin(yaw_lidar), math.cos(yaw_lidar), 0], [0, 0, 1]]
+    )
+    l, w, h = obj_size
+    center_lidar[2] = center_lidar[2] - h / 2
+    corners_3d_lidar = np.matrix(
+        [
+            [l / 2, l / 2, -l / 2, -l / 2, l / 2, l / 2, -l / 2, -l / 2],
+            [w / 2, -w / 2, -w / 2, w / 2, w / 2, -w / 2, -w / 2, w / 2],
+            [0, 0, 0, 0, h, h, h, h],
+        ]
+    )
+    corners_3d_lidar = lidar_r * corners_3d_lidar + np.matrix(center_lidar).T
+    return corners_3d_lidar
 
 def generate_info_dair(dair_root, split):    
     infos = mmcv.load("scripts/single-infrastructure-split-data.json")
@@ -147,6 +163,9 @@ def generate_info_dair(dair_root, split):
     infos = list()
     img_locs_list = list()
     ego_locs_list = list()
+    corners_list = list()
+    valid_ego_locs_list = list()
+    valid_corners_list = list()
     
     bbox_depth, bbox_height = dict(), dict()
     bbox_depth_list = []
@@ -201,6 +220,7 @@ def generate_info_dair(dair_root, split):
         info['sweeps'] = list()
         
         # demo(img_pth, gt_boxes, r_velo2cam, t_velo2cam, camera_intrinsic)   
+        
         ann_infos = list()
         for idx in range(gt_boxes.shape[0]):
             category_name = gt_names[idx]
@@ -209,6 +229,8 @@ def generate_info_dair(dair_root, split):
             gt_box = gt_boxes[idx]
             lwh = gt_box[3:6]
             loc = gt_box[:3]    # need to certify
+            yaw_lidar = gt_box[6]            
+            corners3d = get_lidar_3d_8points(lwh, yaw_lidar, loc)
             
             img_loc = np.matmul(Tr_velo2cam, np.array([[loc[0],loc[1],loc[2], 1]]).T)            
             image_loc = np.matmul(camera_intrinsic, img_loc[:3,:])
@@ -221,7 +243,19 @@ def generate_info_dair(dair_root, split):
             
             img_locs_list.append(img_loc[:3])
             ego_locs_list.append(loc[:,np.newaxis])
+            corners_list.append(corners3d)
             
+            min_height, max_height = -2.5, 1.5
+            if loc[2] > min_height and loc[2] < max_height:
+                valid_ego_locs_list.append(loc[:,np.newaxis])
+                   
+            corners3d = corners3d.A
+            mask = corners3d[2, :] > min_height 
+            corners3d = corners3d[:, mask]
+            mask = corners3d[2, :] < max_height 
+            corners3d = corners3d[:, mask]
+            if corners3d.shape[1] > 0:
+                valid_corners_list.append(corners3d)
             if category_name == "car":
                 xmin, ymin, xmax, ymax = gt_bbox2d[idx]
                 area = (ymax - ymin) * (xmax - xmin)
@@ -256,9 +290,42 @@ def generate_info_dair(dair_root, split):
         infos.append(info)
         
     img_locs_array = np.concatenate(img_locs_list, axis=1)
+    corners_array = np.concatenate(corners_list, axis=1)
     ego_locs_array = np.concatenate(ego_locs_list, axis=1)
+    valid_ego_locs_array = np.concatenate(valid_ego_locs_list, axis=1)
+    valid_corners_array = np.concatenate(valid_corners_list, axis=1)
+    print("--->: ", np.min(ego_locs_array[2]), np.max(ego_locs_array[2]), np.min(corners_array[2]), np.max(corners_array[2]))
+    print("The precentage of location from", min_height, "to", max_height, "is: ", valid_ego_locs_array.shape[1] / ego_locs_array.shape[1])
+    print("The precent of corners from", min_height, "to", max_height, "is: ", valid_corners_array.shape[1] / corners_array.shape[1])
+
+    plt.figure(figsize=(16, 7.5))
+    sns.set_palette("hls")
+    sns.histplot(valid_ego_locs_array[2], color="r",bins=60, kde=True, legend=True)    
+    plt.xlabel('Height', fontdict={'weight': 'normal', 'size': 25})
+    plt.ylabel('Count', fontdict={'weight': 'normal', 'size': 25})
+    plt.tick_params(labelsize=25)
+    ax = plt.gca()
+    bwith = 3
+    ax.spines['bottom'].set_linewidth(bwith)
+    ax.spines['left'].set_linewidth(bwith)
+    ax.spines['top'].set_linewidth(bwith)
+    ax.spines['right'].set_linewidth(bwith)   
+    plt.savefig('valid_ego_locs_array_hist.png')
     
-    print(img_locs_array.shape, ego_locs_array.shape)
+    plt.figure(figsize=(16, 7.5))
+    sns.set_palette("hls")
+    sns.histplot(valid_corners_array[2], color="g",bins=45, kde=True, legend=True)    
+    plt.xlabel('Height', fontdict={'weight': 'normal', 'size': 25})
+    plt.ylabel('Count', fontdict={'weight': 'normal', 'size': 25})
+    plt.tick_params(labelsize=25)
+    ax = plt.gca()
+    bwith = 3
+    ax.spines['bottom'].set_linewidth(bwith)
+    ax.spines['left'].set_linewidth(bwith)
+    ax.spines['top'].set_linewidth(bwith)
+    ax.spines['right'].set_linewidth(bwith)   
+    plt.savefig('valid_corners_array_hist.png')
+
     plt.figure(figsize=(8, 8))
     plt.scatter(img_locs_array[2, :], 
                 ego_locs_array[2, :],
@@ -268,7 +335,6 @@ def generate_info_dair(dair_root, split):
     plt.ylabel('height', fontdict={'weight': 'normal', 'size': 25})
     plt.tick_params(labelsize=20)
     plt.savefig('distribution.png')
-    
         
     print("depth mean & var: ", np.mean(img_locs_array[2, :]), np.var(img_locs_array[2, :]))
     print("height mean & var: ", np.mean(ego_locs_array[2, :]), np.var(ego_locs_array[2, :]))
@@ -278,7 +344,7 @@ def generate_info_dair(dair_root, split):
     sns.set_palette("hls")
     sns.histplot(x, color="r",bins=31, kde=True, legend=True)    
     # plt.title(r'$\mu=75.45$, $\sigma=1258.95$', fontsize=25)
-    plt.xlabel('Depth', fontdict={'weight': 'normal', 'size': 25})
+    plt.xlabel('Height', fontdict={'weight': 'normal', 'size': 25})
     plt.ylabel('Count', fontdict={'weight': 'normal', 'size': 25})
     plt.tick_params(labelsize=25)
     ax = plt.gca()

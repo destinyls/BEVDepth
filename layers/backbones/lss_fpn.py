@@ -317,7 +317,7 @@ class LSSFPN(nn.Module):
         d_coords = np.arange(self.d_bound[2]) / self.d_bound[2] * (math.log(self.d_bound[1]) - math.log(self.d_bound[0]))
         d_coords = np.exp(d_coords + math.log(self.d_bound[0]))
         d_coords = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
-           
+        d_coords = d_coords - 5.5
         # Power ID
         '''
         alpha = 2
