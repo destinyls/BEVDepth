@@ -60,7 +60,7 @@ def run_cli():
     parser.set_defaults(
         profiler='simple',
         deterministic=False,
-        max_epochs=180,
+        max_epochs=200,
         accelerator='ddp',
         num_sanity_val_steps=0,
         gradient_clip_val=5,

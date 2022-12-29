@@ -332,6 +332,7 @@ class LSSFPN(nn.Module):
         d_coords = d_coords - 5.5
         '''
         # SID Guassian
+        '''
         num_bins = self.d_bound[2] // 2
         hmin, hmax = 1e-5, (self.d_bound[1] - self.d_bound[0]) / 2.0
         mu = (self.d_bound[0] + self.d_bound[1]) / 2.0
@@ -340,6 +341,16 @@ class LSSFPN(nn.Module):
         d_coords_2 = d_coords + mu
         d_coords_1 = -1 * d_coords[::-1] + mu        
         d_coords = np.concatenate((d_coords_1, d_coords_2), axis=0)        
+        d_coords = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
+        '''
+        # DID mu
+        alpha = 2.0
+        num_bins = self.d_bound[2]
+        hmean, hlen = (self.d_bound[0] + self.d_bound[1]) / 2.0, (self.d_bound[1] - self.d_bound[0]) / 2.0
+        d_coords = np.arange(-1 * num_bins//2, num_bins//2, 1) / (num_bins//2)    
+        flag = np.sign(d_coords)
+        d_coords = np.power(np.abs(d_coords), alpha) * flag
+        d_coords = d_coords * hlen + hmean
         d_coords = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
         
         '''
