@@ -276,8 +276,8 @@ class NuscMVDetDataset(Dataset):
         self.image_rectify = ImageRectify(image_shape=[self.ida_aug_conf['H'],self.ida_aug_conf['W']])
         self.visual_tool = ProduceHeightMap(resolution=0.05)
 
-        self.ratio_range = [1.0, 0.25]
-        self.roll_range = [0.0, 2.50]
+        self.ratio_range = [1.0, 0.20]
+        self.roll_range = [0.0, 2.00]
         self.pitch_range = [0.0, 0.67]
 
     def _get_sample_indices(self):
