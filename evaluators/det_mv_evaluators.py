@@ -221,8 +221,8 @@ class DetMVNuscEvaluator():
         if tmp_dir is not None:
             tmp_dir.cleanup()
         '''
-        dair_root = "data/dair-v2x"
-        gt_label_path = os.path.join("data/dair-v2x-kitti", "training", "label_2")
+        dair_root = "data/rope3d"
+        gt_label_path = os.path.join("data/rope3d-kitti", "training", "label_2")
         results_path = "outputs"         
         pred_label_path = result2kitti(result_files["img_bbox"], results_path, dair_root, demo=False)
         kitti_evaluation(pred_label_path, gt_label_path, metric_path="output/bev_depth_lss_r50_256x704_128x128_24e")
@@ -403,8 +403,8 @@ class DetMVNuscEvaluator():
     
 if __name__ == "__main__":
     result_files = "./outputs/bev_depth_lss_r50_256x704_128x128_24e/results_nusc.json"
-    dair_root = "data/dair-v2x"
-    gt_label_path = os.path.join("data/dair-v2x-kitti", "training", "label_2")
+    dair_root = "data/rope3d"
+    gt_label_path = os.path.join("data/rope3d-kitti", "training", "label_2")
     results_path = "outputs"
     pred_label_path = result2kitti(result_files, results_path, dair_root, demo=False)
     pred_label_path = "outputs/data"

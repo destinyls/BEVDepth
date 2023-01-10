@@ -139,7 +139,8 @@ def generate_info_rope3d(rope3d_root, split='train', img_id=0):
             if os.path.exists(img_file):
                 idx_list_valid.append((sub_img_path, index))
                 break
-            
+    random.shuffle(idx_list_valid)
+    idx_list_valid = idx_list_valid[:7600]  
     for idx in tqdm(range(len(idx_list_valid))):
         sub_img_path, index = idx_list_valid[idx]
         img_file = os.path.join(sub_img_path, index + ".jpg")
@@ -214,26 +215,14 @@ def generate_info_rope3d(rope3d_root, split='train', img_id=0):
 
 def main():
     rope3d_root = "data/rope3d"
-    train_infos = generate_info_rope3d(rope3d_root, split='train')
-    val_infos = generate_info_rope3d(rope3d_root, split='val')
+    trainavl_infos = generate_info_rope3d(rope3d_root, split='train')
+    # val_infos = generate_info_rope3d(rope3d_root, split='val')
     
-    mmcv.dump(train_infos, './data/rope3d/rope3d_12hz_infos_val_hom_mini.pkl')
-    mmcv.dump(val_infos, './data/rope3d/rope3d_12hz_infos_val_mini.pkl')
-    
-    # train_infos = mmcv.load("./data/rope3d/rope3d_12hz_infos_train.pkl")
-    # val_infos = mmcv.load("./data/rope3d/rope3d_12hz_infos_val.pkl")
-
-    print("train_infos: ", len(train_infos))
-    print("val_infos: ", len(val_infos))
-    random.shuffle(train_infos)
-    random.shuffle(val_infos)
-    
-    train_infos = random.sample(train_infos, 2333)
-    val_infos = random.sample(val_infos, 1000)
-    
-    mmcv.dump(train_infos[:2333], './data/rope3d/rope3d_12hz_infos_train_mini.pkl')
-    mmcv.dump(train_infos[3000:4000], './data/rope3d/rope3d_12hz_infos_val_hom_mini.pkl')
-    mmcv.dump(val_infos[:1000], './data/rope3d/rope3d_12hz_infos_val_mini.pkl')
+    random.shuffle(trainavl_infos)
+    train_infos = trainavl_infos[:int(0.7*len(trainavl_infos))]
+    val_infos = trainavl_infos[int(0.7*len(trainavl_infos)):]
+    mmcv.dump(train_infos, './data/rope3d/rope3d_12hz_infos_train_hom.pkl')
+    mmcv.dump(val_infos, './data/rope3d/rope3d_12hz_infos_val_hom.pkl')
 
 if __name__ == '__main__':
     main()

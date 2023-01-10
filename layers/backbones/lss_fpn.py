@@ -344,7 +344,7 @@ class LSSFPN(nn.Module):
         d_coords = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
         '''
         # DID mu
-        alpha = 1.5
+        alpha = 1.0
         num_bins = self.d_bound[2]
         hmean, hlen = (self.d_bound[0] + self.d_bound[1]) / 2.0, (self.d_bound[1] - self.d_bound[0]) / 2.0
         d_coords = np.arange(-1 * num_bins//2, num_bins//2, 1) / (num_bins//2)    

@@ -27,22 +27,21 @@ map_name_from_general_to_detection = {
     'human.pedestrian.construction_worker': 'pedestrian',
     'animal': 'ignore',
     'vehicle.car': 'car',
-    'vehicle.motorcycle': 'motorcycle',
-    'vehicle.bicycle': 'bicycle',
+    'vehicle.motorcycle': 'motorcycle', #
+    'vehicle.bicycle': 'bicycle', #
     'vehicle.bus.bendy': 'bus',
     'vehicle.bus.rigid': 'bus',
     'vehicle.truck': 'truck',
     'vehicle.construction': 'construction_vehicle',
     'vehicle.emergency.ambulance': 'ignore',
     'vehicle.emergency.police': 'ignore',
-    'vehicle.trailer': 'trailer',
+    'vehicle.trailer': 'trailer', #
     'movable_object.barrier': 'barrier',
     'movable_object.trafficcone': 'traffic_cone',
     'movable_object.pushable_pullable': 'ignore',
     'movable_object.debris': 'ignore',
     'static_object.bicycle_rack': 'ignore',
 }
-
 
 def equation_plane(points): 
     x1, y1, z1 = points[0, 0], points[0, 1], points[0, 2]

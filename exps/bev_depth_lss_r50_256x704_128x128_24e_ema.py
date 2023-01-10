@@ -60,7 +60,7 @@ def run_cli():
     parser.set_defaults(
         profiler='simple',
         deterministic=False,
-        max_epochs=200,
+        max_epochs=180,
         accelerator='ddp',
         num_sanity_val_steps=0,
         gradient_clip_val=5,
@@ -70,7 +70,6 @@ def run_cli():
         default_root_dir='./outputs/bev_depth_lss_r50_256x704_128x128_24e_ema')
     args = parser.parse_args()
     main(args)
-
 
 if __name__ == '__main__':
     run_cli()

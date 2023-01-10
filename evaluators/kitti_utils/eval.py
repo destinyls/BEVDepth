@@ -679,7 +679,7 @@ def kitti_eval(gt_annos,
         0: 'Car',
         1: 'Pedestrian',
         2: 'Cyclist',
-        3: 'Truck',
+        3: 'Bus',
         4: 'Person_sitting',
     }
     name_to_class = {v: n for n, v in class_to_name.items()}
