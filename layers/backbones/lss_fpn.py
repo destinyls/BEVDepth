@@ -317,11 +317,16 @@ class LSSFPN(nn.Module):
                                 dtype=torch.float).view(-1, 1,
                                                         1).expand(-1, fH, fW)
         '''
-        # height SID style
-        d_coords = np.arange(self.d_bound[2]) / self.d_bound[2] * (math.log(self.d_bound[1]) - math.log(self.d_bound[0]))
-        d_coords = np.exp(d_coords + math.log(self.d_bound[0]))
+        # DID
+        alpha = 1.0
+        num_bins = self.d_bound[2]
+        hmean, hlen = (self.d_bound[0] + self.d_bound[1]) / 2.0, (self.d_bound[1] - self.d_bound[0]) / 2.0
+        d_coords = np.arange(-1 * num_bins//2, num_bins//2, 1) / (num_bins//2)    
+        flag = np.sign(d_coords)
+        d_coords = np.power(np.abs(d_coords), alpha) * flag
+        d_coords = d_coords * hlen + hmean
         d_coords = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
-        d_coords = d_coords - 5.5
+
         # height LID style
         '''
         min_height, min_num = 0.5, 40
@@ -362,7 +367,6 @@ class LSSFPN(nn.Module):
         reference_heights = reference_heights.view(batch_size, num_cams, 1, 1, 1, 1,
                                                    1).repeat(1, 1, points.shape[2], points.shape[3], points.shape[4], 1, 1)
         height = -1 * points[:, :, :, :, :, 2, :] + reference_heights[:, :, :, :, :, 0, :]
-        
         points_const = points.clone()
         points_const[:, :, :, :, :, 2, :] = 10
         points_const = torch.cat(
@@ -372,6 +376,7 @@ class LSSFPN(nn.Module):
         points_virtual = combine_virtual.view(batch_size, num_cams, 1, 1, 1, 4, 4).matmul(points_const)
         ratio = height[:, :, :, :, :, 0] / points_virtual[:, :, :, :, :, 1, 0]
         ratio = ratio.view(batch_size, num_cams, ratio.shape[2], ratio.shape[3], ratio.shape[4], 1, 1).repeat(1, 1, 1, 1, 1, 4, 1)
+        ratio = torch.maximum(ratio, 0.0)
         points = points_virtual * ratio
         points[:, :, :, :, :, 3, :] = 1
         combine_ego = sensor2ego_mat.matmul(torch.inverse(sensor2virtual_mat))
