@@ -36,7 +36,9 @@ backbone_conf = {
     'y_bound': [-51.2, 51.2, 0.8],
     'z_bound': [-4, 4, 8],
     # 'd_bound': [-3.0, 5.0, 0.05],
-    'd_bound': [-2, 4, 180],
+    'd_bound': [2.0, 58.0, 0.5],
+    'h_bound': [-2, 4, 180],
+
     'final_dim':
     final_dim,
     'output_channels':
@@ -91,18 +93,19 @@ bda_aug_conf = {
 
 bev_backbone = dict(
     type='ResNet',
-    in_channels=80,
+    in_channels=160,
     depth=18,
     num_stages=3,
     strides=(1, 2, 2),
     dilations=(1, 1, 1),
     out_indices=[0, 1, 2],
     norm_eval=False,
-    base_channels=160,
+    base_channels=320,
 )
 
 bev_neck = dict(type='SECONDFPN',
-                in_channels=[80, 160, 320, 640],
+                # in_channels=[80, 160, 320, 640],
+                in_channels=[160, 320, 640, 1280],
                 upsample_strides=[1, 2, 4, 8],
                 out_channels=[64, 64, 64, 64])
 
@@ -486,7 +489,7 @@ def run_cli():
     parser.set_defaults(
         profiler='simple',
         deterministic=False,
-        max_epochs=48,
+        max_epochs=200,
         accelerator='ddp',
         num_sanity_val_steps=0,
         gradient_clip_val=5,

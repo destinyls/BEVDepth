@@ -9,7 +9,9 @@ from mmcv.cnn import build_conv_layer
 from mmdet3d.models import build_neck
 from mmdet.models import build_backbone
 from mmdet.models.backbones.resnet import BasicBlock
+from mmcv.cnn.bricks.transformer import build_positional_encoding
 from torch import nn
+from layers.backbones.temporal_self_attention import TemporalSelfAttention
 
 from ops.voxel_pooling import voxel_pooling
 
@@ -162,7 +164,7 @@ class SELayer(nn.Module):
 
 class DepthNet(nn.Module):
     def __init__(self, in_channels, mid_channels, context_channels,
-                 depth_channels):
+                 depth_channels, height_channels):
         super(DepthNet, self).__init__()
         self.reduce_conv = nn.Sequential(
             nn.Conv2d(in_channels,
@@ -198,7 +200,7 @@ class DepthNet(nn.Module):
                 im2col_step=128,
             )),
             nn.Conv2d(mid_channels,
-                      depth_channels,
+                      depth_channels+height_channels,
                       kernel_size=1,
                       stride=1,
                       padding=0),
@@ -250,7 +252,7 @@ class DepthNet(nn.Module):
 
 
 class LSSFPN(nn.Module):
-    def __init__(self, x_bound, y_bound, z_bound, d_bound, final_dim,
+    def __init__(self, x_bound, y_bound, z_bound, d_bound, h_bound, final_dim,
                  downsample_factor, output_channels, img_backbone_conf,
                  img_neck_conf, depth_net_conf):
         """Modified from `https://github.com/nv-tlabs/lift-splat-shoot`.
@@ -273,8 +275,21 @@ class LSSFPN(nn.Module):
         super(LSSFPN, self).__init__()
         self.downsample_factor = downsample_factor
         self.d_bound = d_bound
+        self.h_bound = h_bound
         self.final_dim = final_dim
         self.output_channels = output_channels
+        self.is_fusion = False
+
+        if self.is_fusion:
+            self.bev_fusion = TemporalSelfAttention(embed_dims=80, num_heads=8, num_levels=1)
+            # positional_encoding=dict(type='SinePositionalEncoding', num_feats=40, normalize=True)
+            positional_encoding=dict(
+                type='LearnedPositionalEncoding',
+                num_feats=40,
+                row_num_embed=128,
+                col_num_embed=128,
+                )
+            self.positional_encoding = build_positional_encoding(positional_encoding)
 
         self.register_buffer(
             'voxel_size',
@@ -288,8 +303,11 @@ class LSSFPN(nn.Module):
             'voxel_num',
             torch.LongTensor([(row[1] - row[0]) / row[2]
                               for row in [x_bound, y_bound, z_bound]]))
-        self.register_buffer('frustum', self.create_frustum())
-        self.depth_channels, _, _, _ = self.frustum.shape
+        
+        self.register_buffer('frustum_depth', self.create_frustum(is_depth=True))
+        self.register_buffer('frustum_height', self.create_frustum(is_depth=False))
+        self.depth_channels, _, _, _ = self.frustum_depth.shape
+        self.height_channels, _, _, _ = self.frustum_height.shape
 
         self.img_backbone = build_backbone(img_backbone_conf)
         self.img_neck = build_neck(img_neck_conf)
@@ -304,28 +322,68 @@ class LSSFPN(nn.Module):
             depth_net_conf['mid_channels'],
             self.output_channels,
             self.depth_channels,
+            self.height_channels,
         )
+    
+    @staticmethod
+    def get_reference_points(H, W, Z=8, num_points_in_pillar=4, dim='3d', bs=1, device='cuda', dtype=torch.float):
+        """Get the reference points used in SCA and TSA.
+        Args:
+            H, W: spatial shape of bev.
+            Z: hight of pillar.
+            D: sample D points uniformly from each pillar.
+            device (obj:`device`): The device where
+                reference_points should be.
+        Returns:
+            Tensor: reference points used in decoder, has \
+                shape (bs, num_keys, num_levels, 2).
+        """
+        # reference points in 3D space, used in spatial cross-attention (SCA)
+        if dim == '3d':
+            zs = torch.linspace(0.5, Z - 0.5, num_points_in_pillar, dtype=dtype,
+                                device=device).view(-1, 1, 1).expand(num_points_in_pillar, H, W) / Z
+            xs = torch.linspace(0.5, W - 0.5, W, dtype=dtype,
+                                device=device).view(1, 1, W).expand(num_points_in_pillar, H, W) / W
+            ys = torch.linspace(0.5, H - 0.5, H, dtype=dtype,
+                                device=device).view(1, H, 1).expand(num_points_in_pillar, H, W) / H
+            ref_3d = torch.stack((xs, ys, zs), -1)
+            ref_3d = ref_3d.permute(0, 3, 1, 2).flatten(2).permute(0, 2, 1)
+            ref_3d = ref_3d[None].repeat(bs, 1, 1, 1)
+            return ref_3d
+        # reference points on 2D bev plane, used in temporal self-attention (TSA).
+        elif dim == '2d':
+            ref_y, ref_x = torch.meshgrid(
+                torch.linspace(
+                    0.5, H - 0.5, H, dtype=dtype, device=device),
+                torch.linspace(
+                    0.5, W - 0.5, W, dtype=dtype, device=device)
+            )
+            ref_y = ref_y.reshape(-1)[None] / H
+            ref_x = ref_x.reshape(-1)[None] / W
+            ref_2d = torch.stack((ref_x, ref_y), -1)
+            ref_2d = ref_2d.repeat(bs, 1, 1).unsqueeze(2)
+            return ref_2d
 
-    def create_frustum(self):
+    def create_frustum(self, is_depth=True):
         """Generate frustum"""
         # make grid in image plane
         ogfH, ogfW = self.final_dim
         fH, fW = ogfH // self.downsample_factor, ogfW // self.downsample_factor
         # depth
-        '''
-        d_coords = torch.arange(*self.d_bound,
-                                dtype=torch.float).view(-1, 1,
-                                                        1).expand(-1, fH, fW)
-        '''
-        # DID
-        alpha = 1.0
-        num_bins = self.d_bound[2]
-        hmean, hlen = (self.d_bound[0] + self.d_bound[1]) / 2.0, (self.d_bound[1] - self.d_bound[0]) / 2.0
-        d_coords = np.arange(-1 * num_bins//2, num_bins//2, 1) / (num_bins//2)    
-        flag = np.sign(d_coords)
-        d_coords = np.power(np.abs(d_coords), alpha) * flag
-        d_coords = d_coords * hlen + hmean
-        d_coords = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
+        if is_depth:
+            d_coords = torch.arange(*self.d_bound,
+                                    dtype=torch.float).view(-1, 1,
+                                                            1).expand(-1, fH, fW)
+        else:
+            # DID
+            alpha = 1.0
+            num_bins = self.h_bound[2]
+            hmean, hlen = (self.h_bound[0] + self.h_bound[1]) / 2.0, (self.h_bound[1] - self.h_bound[0]) / 2.0
+            d_coords = np.arange(-1 * num_bins//2, num_bins//2, 1) / (num_bins//2)    
+            flag = np.sign(d_coords)
+            d_coords = np.power(np.abs(d_coords), alpha) * flag
+            d_coords = d_coords * hlen + hmean
+            d_coords = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
 
         # height LID style
         '''
@@ -394,7 +452,7 @@ class LSSFPN(nn.Module):
                               4).matmul(points)
         return points
     
-    def get_geometry(self, sensor2ego_mat, sensor2virtual_mat, intrin_mat, ida_mat, reference_heights, bda_mat):
+    def get_geometry(self, sensor2ego_mat, sensor2virtual_mat, intrin_mat, ida_mat, reference_heights, bda_mat, is_depth=True):
         """Transfer points from camera coord to ego coord.
         Args:
             rots(Tensor): Rotation matrix from camera to ego.
@@ -408,14 +466,18 @@ class LSSFPN(nn.Module):
             Tensors: points ego coord.
         """
         batch_size, num_cams, _, _ = sensor2ego_mat.shape
-        
-        # undo post-transformation
-        # B x N x D x H x W x 3
-        points = self.frustum
         ida_mat = ida_mat.view(batch_size, num_cams, 1, 1, 1, 4, 4)
-        points = ida_mat.inverse().matmul(points.unsqueeze(-1))
-        points = self.height2localtion(points, sensor2ego_mat, sensor2virtual_mat, intrin_mat, reference_heights) 
-        # points = self.depth2location(points, sensor2ego_mat, intrin_mat)
+        # undo post-transformation
+        # B x N x D x H x W x 3\
+        if is_depth:
+            points = self.frustum_depth
+            points = ida_mat.inverse().matmul(points.unsqueeze(-1))
+            points = self.depth2location(points, sensor2ego_mat, intrin_mat)
+        else:
+            points = self.frustum_height
+            points = ida_mat.inverse().matmul(points.unsqueeze(-1))
+            points = self.height2localtion(points, sensor2ego_mat, sensor2virtual_mat, intrin_mat, reference_heights)
+        
         if bda_mat is not None:
             bda_mat = bda_mat.unsqueeze(1).repeat(1, num_cams, 1, 1).view(
                 batch_size, num_cams, 1, 1, 1, 4, 4)
@@ -482,13 +544,14 @@ class LSSFPN(nn.Module):
                                     source_features.shape[4]),
             mats_dict,
         )
+        geo_channels = self.depth_channels + self.height_channels
         depth = depth_feature[:, :self.depth_channels].softmax(1)
+        height = depth_feature[:, self.depth_channels:geo_channels].softmax(1)
+
         img_feat_with_depth = depth.unsqueeze(
-            1) * depth_feature[:, self.depth_channels:(
-                self.depth_channels + self.output_channels)].unsqueeze(2)
-
+            1) * depth_feature[:, geo_channels:(
+                geo_channels + self.output_channels)].unsqueeze(2)
         img_feat_with_depth = self._forward_voxel_net(img_feat_with_depth)
-
         img_feat_with_depth = img_feat_with_depth.reshape(
             batch_size,
             num_cams,
@@ -497,19 +560,75 @@ class LSSFPN(nn.Module):
             img_feat_with_depth.shape[3],
             img_feat_with_depth.shape[4],
         )
-        geom_xyz = self.get_geometry(
+
+        img_feat_with_height = height.unsqueeze(
+            1) * depth_feature[:, geo_channels:(
+                geo_channels + self.output_channels)].unsqueeze(2)
+        img_feat_with_height = self._forward_voxel_net(img_feat_with_height)
+        img_feat_with_height = img_feat_with_height.reshape(
+            batch_size,
+            num_cams,
+            img_feat_with_height.shape[1],
+            img_feat_with_height.shape[2],
+            img_feat_with_height.shape[3],
+            img_feat_with_height.shape[4],
+        )
+
+        geom_xyz_depth = self.get_geometry(
             mats_dict['sensor2ego_mats'][:, sweep_index, ...],
             mats_dict['sensor2virtual_mats'][:, sweep_index, ...],
             mats_dict['intrin_mats'][:, sweep_index, ...],
             mats_dict['ida_mats'][:, sweep_index, ...],
             mats_dict['reference_heights'][:, sweep_index, ...],
             mats_dict.get('bda_mat', None),
+            is_depth=True,
         )
+        geom_xyz_height = self.get_geometry(
+            mats_dict['sensor2ego_mats'][:, sweep_index, ...],
+            mats_dict['sensor2virtual_mats'][:, sweep_index, ...],
+            mats_dict['intrin_mats'][:, sweep_index, ...],
+            mats_dict['ida_mats'][:, sweep_index, ...],
+            mats_dict['reference_heights'][:, sweep_index, ...],
+            mats_dict.get('bda_mat', None),
+            is_depth=False
+        )
+
         img_feat_with_depth = img_feat_with_depth.permute(0, 1, 3, 4, 5, 2)
-        geom_xyz = ((geom_xyz - (self.voxel_coord - self.voxel_size / 2.0)) /
+        img_feat_with_height = img_feat_with_height.permute(0, 1, 3, 4, 5, 2)
+        geom_xyz_depth = ((geom_xyz_depth - (self.voxel_coord - self.voxel_size / 2.0)) /
                     self.voxel_size).int()
-        feature_map = voxel_pooling(geom_xyz, img_feat_with_depth.contiguous(),
+        geom_xyz_height = ((geom_xyz_height - (self.voxel_coord - self.voxel_size / 2.0)) /
+                    self.voxel_size).int()
+        feature_map_depth = voxel_pooling(geom_xyz_depth, img_feat_with_depth.contiguous(),
                                     self.voxel_num.cuda())
+        feature_map_height = voxel_pooling(geom_xyz_height, img_feat_with_height.contiguous(),
+                                    self.voxel_num.cuda())
+
+        if self.is_fusion:
+            device, dtype = feature_map_depth.device, feature_map_depth.dtype
+            channels, bev_h, bev_w = feature_map_depth.shape[1], feature_map_depth.shape[2], feature_map_depth.shape[3]
+            bev_mask = torch.zeros((batch_size, bev_h, bev_w), device=device).to(dtype)
+            bev_pos = self.positional_encoding(bev_mask).to(dtype)
+            bev_pos = bev_pos.permute(0, 2, 3, 1).reshape(batch_size, -1, channels).contiguous()
+            query = feature_map_depth.permute(0, 2, 3, 1).reshape(batch_size, -1, channels).contiguous()
+            key = value = feature_map_depth.permute(0, 2, 3, 1).reshape(batch_size, -1, channels).contiguous()
+            ref_2d = self.get_reference_points(
+                bev_h, bev_w, dim='2d', bs=batch_size, device=device, dtype=dtype)
+            
+            _, len_bev, _, _ = ref_2d.shape
+            shift_ref_2d = ref_2d
+            hybird_ref_2d = torch.stack([shift_ref_2d, ref_2d], 1).reshape(
+                    batch_size*2, len_bev, 1, 2)
+            output = self.bev_fusion(query, key, value, 
+                            query_pos=bev_pos, 
+                            key_pos=bev_pos,
+                            reference_points=hybird_ref_2d,
+                            spatial_shapes=torch.tensor(
+                                [[bev_h, bev_w]], device=query.device),
+                            level_start_index=torch.tensor([0], device=query.device)
+            )
+        
+        feature_map = torch.cat([feature_map_depth, feature_map_height], dim=1)
         if is_return_depth:
             return feature_map.contiguous(), depth
         return feature_map.contiguous()
