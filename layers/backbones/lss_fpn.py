@@ -278,14 +278,14 @@ class LSSFPN(nn.Module):
         self.h_bound = h_bound
         self.final_dim = final_dim
         self.output_channels = output_channels
-        self.is_fusion = False
+        self.is_fusion = True
 
         if self.is_fusion:
-            self.bev_fusion = TemporalSelfAttention(embed_dims=80, num_heads=8, num_levels=1)
+            self.bev_fusion = TemporalSelfAttention(embed_dims=output_channels, num_heads=8, num_levels=1)
             # positional_encoding=dict(type='SinePositionalEncoding', num_feats=40, normalize=True)
             positional_encoding=dict(
                 type='LearnedPositionalEncoding',
-                num_feats=40,
+                num_feats=output_channels//2,
                 row_num_embed=128,
                 col_num_embed=128,
                 )
@@ -611,10 +611,10 @@ class LSSFPN(nn.Module):
             bev_pos = self.positional_encoding(bev_mask).to(dtype)
             bev_pos = bev_pos.permute(0, 2, 3, 1).reshape(batch_size, -1, channels).contiguous()
             query = feature_map_depth.permute(0, 2, 3, 1).reshape(batch_size, -1, channels).contiguous()
-            key = value = feature_map_depth.permute(0, 2, 3, 1).reshape(batch_size, -1, channels).contiguous()
+            key = value = feature_map_height.permute(0, 2, 3, 1).reshape(batch_size, -1, channels).contiguous()
             ref_2d = self.get_reference_points(
                 bev_h, bev_w, dim='2d', bs=batch_size, device=device, dtype=dtype)
-            
+                
             _, len_bev, _, _ = ref_2d.shape
             shift_ref_2d = ref_2d
             hybird_ref_2d = torch.stack([shift_ref_2d, ref_2d], 1).reshape(
@@ -627,8 +627,9 @@ class LSSFPN(nn.Module):
                                 [[bev_h, bev_w]], device=query.device),
                             level_start_index=torch.tensor([0], device=query.device)
             )
-        
-        feature_map = torch.cat([feature_map_depth, feature_map_height], dim=1)
+            feature_map = output.permute(0, 2, 1).contiguous().view(batch_size, channels, bev_h, bev_w)
+        else:
+            feature_map = feature_map_depth + feature_map_height            
         if is_return_depth:
             return feature_map.contiguous(), depth
         return feature_map.contiguous()

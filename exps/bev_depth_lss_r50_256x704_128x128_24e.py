@@ -93,19 +93,21 @@ bda_aug_conf = {
 
 bev_backbone = dict(
     type='ResNet',
-    in_channels=160,
+    # in_channels=160,
+    in_channels=80,
     depth=18,
     num_stages=3,
     strides=(1, 2, 2),
     dilations=(1, 1, 1),
     out_indices=[0, 1, 2],
     norm_eval=False,
-    base_channels=320,
+    # base_channels=320,
+    base_channels=160,
 )
 
 bev_neck = dict(type='SECONDFPN',
-                # in_channels=[80, 160, 320, 640],
-                in_channels=[160, 320, 640, 1280],
+                in_channels=[80, 160, 320, 640],
+                # in_channels=[160, 320, 640, 1280],
                 upsample_strides=[1, 2, 4, 8],
                 out_channels=[64, 64, 64, 64])
 
@@ -489,13 +491,13 @@ def run_cli():
     parser.set_defaults(
         profiler='simple',
         deterministic=False,
-        max_epochs=200,
+        max_epochs=48,
         accelerator='ddp',
         num_sanity_val_steps=0,
         gradient_clip_val=5,
         limit_val_batches=0,
         enable_checkpointing=True,
-        precision=16,
+        precision=32,
         default_root_dir='./outputs/bev_depth_lss_r50_256x704_128x128_24e')
     args = parser.parse_args()
     main(args)

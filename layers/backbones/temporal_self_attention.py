@@ -4,7 +4,7 @@
 #  Modified by Zhiqi Li
 # ---------------------------------------------
 
-from .multi_scale_deformable_attn_function import MultiScaleDeformableAttnFunction_fp32
+from .multi_scale_deformable_attn_function import MultiScaleDeformableAttnFunction_fp32, MultiScaleDeformableAttnFunction_fp16
 from mmcv.ops.multi_scale_deform_attn import multi_scale_deformable_attn_pytorch
 import warnings
 import torch
@@ -68,7 +68,7 @@ class TemporalSelfAttention(BaseModule):
         self.norm_cfg = norm_cfg
         self.dropout = nn.Dropout(dropout)
         self.batch_first = batch_first
-        self.fp16_enabled = False
+        self.fp16_enabled = True
 
         # you'd better set dim_per_head to a power of 2
         # which is more efficient in the CUDA implementation
@@ -132,7 +132,6 @@ class TemporalSelfAttention(BaseModule):
                 spatial_shapes=None,
                 level_start_index=None,
                 flag='decoder',
-
                 **kwargs):
         """Forward Function of MultiScaleDeformAttention.
 
@@ -169,14 +168,15 @@ class TemporalSelfAttention(BaseModule):
         Returns:
              Tensor: forwarded results with shape [num_query, bs, embed_dims].
         """
-
         if value is None:
             assert self.batch_first
             bs, len_bev, c = query.shape
             value = torch.stack([query, query], 1).reshape(bs*2, len_bev, c)
+        else:
+            bs, len_bev, c = value.shape
+            value = torch.stack([value, query], 1).reshape(bs*2, len_bev, c)
 
             # value = torch.cat([query, query], 0)
-
         if identity is None:
             identity = query
         if query_pos is not None:
@@ -186,16 +186,16 @@ class TemporalSelfAttention(BaseModule):
             query = query.permute(1, 0, 2)
             value = value.permute(1, 0, 2)
         bs,  num_query, embed_dims = query.shape
+
         _, num_value, _ = value.shape
         assert (spatial_shapes[:, 0] * spatial_shapes[:, 1]).sum() == num_value
         assert self.num_bev_queue == 2
 
         query = torch.cat([value[:bs], query], -1)
         value = self.value_proj(value)
-
+        
         if key_padding_mask is not None:
             value = value.masked_fill(key_padding_mask[..., None], 0.0)
-
         value = value.reshape(bs*self.num_bev_queue,
                               num_value, self.num_heads, -1)
 
@@ -217,7 +217,6 @@ class TemporalSelfAttention(BaseModule):
         sampling_offsets = sampling_offsets.permute(0, 3, 1, 2, 4, 5, 6)\
             .reshape(bs*self.num_bev_queue, num_query, self.num_heads, self.num_levels, self.num_points, 2)
 
-        print("reference_points: ", reference_points.shape, sampling_offsets.shape, value.shape)
         if reference_points.shape[-1] == 2:
             offset_normalizer = torch.stack(
                 [spatial_shapes[..., 1], spatial_shapes[..., 0]], -1)
@@ -234,6 +233,7 @@ class TemporalSelfAttention(BaseModule):
             raise ValueError(
                 f'Last dim of reference_points must be'
                 f' 2 or 4, but get {reference_points.shape[-1]} instead.')
+        
         if torch.cuda.is_available() and value.is_cuda:
             # using fp16 deformable attention is unstable because it performs many sum operations
             if value.dtype == torch.float16:
@@ -249,13 +249,10 @@ class TemporalSelfAttention(BaseModule):
 
         # output shape (bs*num_bev_queue, num_query, embed_dims)
         # (bs*num_bev_queue, num_query, embed_dims)-> (num_query, embed_dims, bs*num_bev_queue)
-        print("outputs: 1 ", output.shape)
         output = output.permute(1, 2, 0)
 
         # fuse history value and current value
         # (num_query, embed_dims, bs*num_bev_queue)-> (num_query, embed_dims, bs, num_bev_queue)
-        
-        print("output: ", num_query, embed_dims, bs, self.num_bev_queue)
         output = output.view(num_query, embed_dims, bs, self.num_bev_queue)
         output = output.mean(-1)
 
