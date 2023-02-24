@@ -281,14 +281,17 @@ class LSSFPN(nn.Module):
         self.is_fusion = True
 
         if self.is_fusion:
-            self.bev_fusion = TemporalSelfAttention(embed_dims=output_channels, num_heads=8, num_levels=1)
-            # positional_encoding=dict(type='SinePositionalEncoding', num_feats=40, normalize=True)
+            self.depth_fusion = TemporalSelfAttention(embed_dims=output_channels, num_heads=8, num_levels=1)
+            self.height_fusion = TemporalSelfAttention(embed_dims=output_channels, num_heads=8, num_levels=1)
+            positional_encoding=dict(type='SinePositionalEncoding', num_feats=40, normalize=True)
+            '''
             positional_encoding=dict(
                 type='LearnedPositionalEncoding',
                 num_feats=output_channels//2,
                 row_num_embed=128,
                 col_num_embed=128,
                 )
+            '''
             self.positional_encoding = build_positional_encoding(positional_encoding)
 
         self.register_buffer(
@@ -610,22 +613,36 @@ class LSSFPN(nn.Module):
             bev_mask = torch.zeros((batch_size, bev_h, bev_w), device=device).to(dtype)
             bev_pos = self.positional_encoding(bev_mask).to(dtype)
             bev_pos = bev_pos.permute(0, 2, 3, 1).reshape(batch_size, -1, channels).contiguous()
-            query = feature_map_depth.permute(0, 2, 3, 1).reshape(batch_size, -1, channels).contiguous()
-            key = value = feature_map_height.permute(0, 2, 3, 1).reshape(batch_size, -1, channels).contiguous()
+            depth_embed = feature_map_depth.permute(0, 2, 3, 1).reshape(batch_size, -1, channels).contiguous()
+            height_embed = feature_map_height.permute(0, 2, 3, 1).reshape(batch_size, -1, channels).contiguous()
             ref_2d = self.get_reference_points(
                 bev_h, bev_w, dim='2d', bs=batch_size, device=device, dtype=dtype)
-                
+            
+
+            print("query: ", query.shape, key.shape, value.shape)
             _, len_bev, _, _ = ref_2d.shape
             shift_ref_2d = ref_2d
             hybird_ref_2d = torch.stack([shift_ref_2d, ref_2d], 1).reshape(
                     batch_size*2, len_bev, 1, 2)
-            output = self.bev_fusion(query, key, value, 
-                            query_pos=bev_pos, 
-                            key_pos=bev_pos,
-                            reference_points=hybird_ref_2d,
-                            spatial_shapes=torch.tensor(
-                                [[bev_h, bev_w]], device=query.device),
-                            level_start_index=torch.tensor([0], device=query.device)
+            
+            query = nn.Parameter(torch.randn(depth_embed.shape[0], depth_embed.shape[1], depth_embed.shape[2]))
+            
+            output = self.depth_fusion(query, depth_embed, depth_embed, 
+                                       query_pos=bev_pos, 
+                                       key_pos=bev_pos,
+                                       reference_points=hybird_ref_2d,
+                                       spatial_shapes=torch.tensor(
+                                            [[bev_h, bev_w]], device=query.device),
+                                       level_start_index=torch.tensor([0], device=query.device)
+            )
+
+            output = self.height_fusion(output, height_embed, height_embed, 
+                                        query_pos=bev_pos, 
+                                        key_pos=bev_pos,
+                                        reference_points=hybird_ref_2d,
+                                        spatial_shapes=torch.tensor(
+                                            [[bev_h, bev_w]], device=query.device),
+                                        level_start_index=torch.tensor([0], device=query.device)
             )
             feature_map = output.permute(0, 2, 1).contiguous().view(batch_size, channels, bev_h, bev_w)
         else:
