@@ -606,6 +606,12 @@ class LSSFPN(nn.Module):
                                     self.voxel_num.cuda())
         feature_map_height = voxel_pooling(geom_xyz_height, img_feat_with_height.contiguous(),
                                     self.voxel_num.cuda())
+        depth_pred = depth.view(batch_size, num_cams, depth.shape[1], depth.shape[2], depth.shape[3]).permute(0,1,3,4,2)
+        height_pred = height.view(batch_size, num_cams, height.shape[1], height.shape[2], height.shape[3]).permute(0,1,3,4,2)
+        heigth_template = geom_xyz_height[:,:,:,:,:,2].permute(0,1,3,4,2)
+        depth_template = geom_xyz_depth[:,:,:,:,:,2].permute(0,1,3,4,2)
+        depth_pred = torch.sum(depth_pred * depth_template, dim=-1)
+        height_pred = torch.sum(height_pred * heigth_template, dim=-1)
 
         if self.is_fusion:
             device, dtype = feature_map_depth.device, feature_map_depth.dtype
@@ -618,15 +624,12 @@ class LSSFPN(nn.Module):
             ref_2d = self.get_reference_points(
                 bev_h, bev_w, dim='2d', bs=batch_size, device=device, dtype=dtype)
             
-
-            print("query: ", query.shape, key.shape, value.shape)
             _, len_bev, _, _ = ref_2d.shape
             shift_ref_2d = ref_2d
             hybird_ref_2d = torch.stack([shift_ref_2d, ref_2d], 1).reshape(
                     batch_size*2, len_bev, 1, 2)
             
-            query = nn.Parameter(torch.randn(depth_embed.shape[0], depth_embed.shape[1], depth_embed.shape[2]))
-            
+            query = nn.Parameter(torch.randn((depth_embed.shape[0], depth_embed.shape[1], depth_embed.shape[2]), device=device, dtype=dtype))
             output = self.depth_fusion(query, depth_embed, depth_embed, 
                                        query_pos=bev_pos, 
                                        key_pos=bev_pos,
@@ -648,8 +651,8 @@ class LSSFPN(nn.Module):
         else:
             feature_map = feature_map_depth + feature_map_height            
         if is_return_depth:
-            return feature_map.contiguous(), depth
-        return feature_map.contiguous()
+            return [feature_map.contiguous(), depth_pred, height_pred], depth
+        return [feature_map.contiguous(), depth_pred, height_pred]
 
     def forward(self,
                 sweep_imgs,

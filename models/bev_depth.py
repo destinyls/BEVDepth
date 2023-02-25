@@ -57,12 +57,12 @@ class BEVDepth(nn.Module):
                                           mats_dict,
                                           timestamps,
                                           is_return_depth=True)
-            preds = self.head(x)
-            return preds, depth_pred
+            preds = self.head(x[0])
+            return [preds, x[1], x[2]], depth_pred
         else:
             x = self.backbone(x, mats_dict, timestamps)
-            preds = self.head(x)
-            return preds
+            preds = self.head(x[0])
+            return [preds, x[1], x[2]]
 
     def get_targets(self, gt_boxes, gt_labels):
         """Generate training targets for a single sample.

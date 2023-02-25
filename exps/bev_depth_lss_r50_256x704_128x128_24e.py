@@ -258,13 +258,15 @@ class BEVDepthLightningModel(LightningModule):
             preds, depth_preds = self(sweep_imgs, mats)
         else:
             preds = self(sweep_imgs, mats)
+        preds, depth_pred, height_pred = preds[0], preds[1], preds[2]
         if isinstance(self.model, torch.nn.parallel.DistributedDataParallel):
             targets = self.model.module.get_targets(gt_boxes, gt_labels)
             detection_loss = self.model.module.loss(targets, preds)
+            consistency_loss = self.model.module.head.loss_bbox(depth_pred, height_pred) * 100
         else:
             targets = self.model.get_targets(gt_boxes, gt_labels)
             detection_loss = self.model.loss(targets, preds)
-
+            consistency_loss = self.model.head.loss_bbox(depth_pred, height_pred) * 100
         if len(batch) == 7:
             if len(depth_labels.shape) == 5:
                 # only key-frame will calculate depth loss
@@ -272,9 +274,11 @@ class BEVDepthLightningModel(LightningModule):
             depth_loss = self.get_depth_loss(depth_labels.cuda(), depth_preds)
             self.log('detection_loss', detection_loss)
             self.log('depth_loss', depth_loss)
+            self.log('consistency_loss', consistency_loss)
             return detection_loss + depth_loss
         else:
             self.log('detection_loss', detection_loss)
+            self.log('consistency_loss', consistency_loss)
             return detection_loss
 
     def get_depth_loss(self, depth_labels, depth_preds):
