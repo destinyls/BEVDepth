@@ -98,7 +98,21 @@ class TemporalSelfAttention(BaseModule):
                                            num_bev_queue*num_heads * num_levels * num_points)
         self.value_proj = nn.Linear(embed_dims, embed_dims)
         self.output_proj = nn.Linear(embed_dims, embed_dims)
+
+        self.norm1 = nn.LayerNorm(embed_dims)
+        self.linear1 = nn.Linear(embed_dims, embed_dims)
+        self.activation = nn.ReLU(inplace=True)
+        self.dropout2 = nn.Dropout(dropout)
+        self.linear2 = nn.Linear(embed_dims, embed_dims)
+        self.dropout3 = nn.Dropout(dropout)
+        self.norm2 = nn.LayerNorm(embed_dims)
         self.init_weights()
+
+    def forward_ffn(self, src):
+        src2 = self.linear2(self.dropout2(self.activation(self.linear1(src))))
+        src = src + self.dropout3(src2)
+        src = self.norm2(src)
+        return src
 
     def init_weights(self):
         """Default initialization for Parameters of Module."""
@@ -119,6 +133,9 @@ class TemporalSelfAttention(BaseModule):
         constant_init(self.attention_weights, val=0., bias=0.)
         xavier_init(self.value_proj, distribution='uniform', bias=0.)
         xavier_init(self.output_proj, distribution='uniform', bias=0.)
+        xavier_init(self.linear1, distribution='uniform', bias=0.)
+        xavier_init(self.linear2, distribution='uniform', bias=0.)
+
         self._is_init = True
 
     def forward(self,
@@ -258,10 +275,11 @@ class TemporalSelfAttention(BaseModule):
 
         # (num_query, embed_dims, bs)-> (bs, num_query, embed_dims)
         output = output.permute(2, 0, 1)
-
         output = self.output_proj(output)
 
         if not self.batch_first:
             output = output.permute(1, 0, 2)
-
-        return self.dropout(output) + identity
+        output = self.dropout(output) + identity
+        output = self.norm1(output)
+        output = self.forward_ffn(output)
+        return output

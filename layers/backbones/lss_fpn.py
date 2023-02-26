@@ -282,16 +282,7 @@ class LSSFPN(nn.Module):
 
         if self.is_fusion:
             self.depth_fusion = TemporalSelfAttention(embed_dims=output_channels, num_heads=8, num_levels=1)
-            self.height_fusion = TemporalSelfAttention(embed_dims=output_channels, num_heads=8, num_levels=1)
             positional_encoding=dict(type='SinePositionalEncoding', num_feats=40, normalize=True)
-            '''
-            positional_encoding=dict(
-                type='LearnedPositionalEncoding',
-                num_feats=output_channels//2,
-                row_num_embed=128,
-                col_num_embed=128,
-                )
-            '''
             self.positional_encoding = build_positional_encoding(positional_encoding)
 
         self.register_buffer(
@@ -629,24 +620,15 @@ class LSSFPN(nn.Module):
             hybird_ref_2d = torch.stack([shift_ref_2d, ref_2d], 1).reshape(
                     batch_size*2, len_bev, 1, 2)
             
-            query = nn.Parameter(torch.randn((depth_embed.shape[0], depth_embed.shape[1], depth_embed.shape[2]), device=device, dtype=dtype))
-            output = self.depth_fusion(query, depth_embed, depth_embed, 
+            output = self.depth_fusion(depth_embed, height_embed, height_embed, 
                                        query_pos=bev_pos, 
                                        key_pos=bev_pos,
                                        reference_points=hybird_ref_2d,
                                        spatial_shapes=torch.tensor(
-                                            [[bev_h, bev_w]], device=query.device),
-                                       level_start_index=torch.tensor([0], device=query.device)
+                                            [[bev_h, bev_w]], device=depth_embed.device),
+                                       level_start_index=torch.tensor([0], device=depth_embed.device)
             )
-
-            output = self.height_fusion(output, height_embed, height_embed, 
-                                        query_pos=bev_pos, 
-                                        key_pos=bev_pos,
-                                        reference_points=hybird_ref_2d,
-                                        spatial_shapes=torch.tensor(
-                                            [[bev_h, bev_w]], device=query.device),
-                                        level_start_index=torch.tensor([0], device=query.device)
-            )
+            
             feature_map = output.permute(0, 2, 1).contiguous().view(batch_size, channels, bev_h, bev_w)
         else:
             feature_map = feature_map_depth + feature_map_height            
