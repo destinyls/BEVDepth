@@ -17,6 +17,18 @@ from ops.voxel_pooling import voxel_pooling
 
 __all__ = ['LSSFPN']
 
+class SpatialAttention(nn.Module):
+    def __init__(self, kernel_size=7):
+        super(SpatialAttention, self).__init__()
+        self.conv1 = nn.Conv2d(2, 1, kernel_size, padding=kernel_size//2, bias=False)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        avg_out = torch.mean(x, dim=1, keepdim=True)
+        max_out, _ = torch.max(x, dim=1, keepdim=True)
+        x = torch.cat([avg_out, max_out], dim=1)
+        x = self.conv1(x)
+        return self.sigmoid(x)
 
 class _ASPPModule(nn.Module):
     def __init__(self, inplanes, planes, kernel_size, padding, dilation,
@@ -161,6 +173,38 @@ class SELayer(nn.Module):
         x_se = self.conv_expand(x_se)
         return x * self.gate(x_se)
 
+class DepthLayer(nn.Module):
+    def __init__(self, mid_channels, depth_channels):
+        super(DepthLayer, self).__init__()
+        self.depth_mlp = Mlp(27, mid_channels, mid_channels)
+        self.depth_se = SELayer(mid_channels)  # NOTE: add camera-aware
+        self.depth_conv = nn.Sequential(
+            BasicBlock(mid_channels, mid_channels),
+            BasicBlock(mid_channels, mid_channels),
+            BasicBlock(mid_channels, mid_channels),
+            ASPP(mid_channels, mid_channels),
+            build_conv_layer(cfg=dict(
+                type='DCN',
+                in_channels=mid_channels,
+                out_channels=mid_channels,
+                kernel_size=3,
+                padding=1,
+                groups=4,
+                im2col_step=128,
+            )),
+            nn.Conv2d(mid_channels,
+                        depth_channels,
+                        kernel_size=1,
+                        stride=1,
+                        padding=0),
+            )
+
+    def forward(self, x, mlp_input):
+        depth_se = self.depth_mlp(mlp_input)[..., None, None]
+        depth = self.depth_se(x, depth_se)
+        depth = self.depth_conv(depth)
+        return depth
+
 
 class DepthNet(nn.Module):
     def __init__(self, in_channels, mid_channels, context_channels,
@@ -181,10 +225,13 @@ class DepthNet(nn.Module):
                                       stride=1,
                                       padding=0)
         self.bn = nn.BatchNorm1d(27)
-        self.depth_mlp = Mlp(27, mid_channels, mid_channels)
-        self.depth_se = SELayer(mid_channels)  # NOTE: add camera-aware
         self.context_mlp = Mlp(27, mid_channels, mid_channels)
         self.context_se = SELayer(mid_channels)  # NOTE: add camera-aware
+
+        # self.depth_layer = DepthLayer(mid_channels, depth_channels + height_channels)
+        # self.height_layer = DepthLayer(mid_channels, height_channels)
+        self.depth_mlp = Mlp(27, mid_channels, mid_channels)
+        self.depth_se = SELayer(mid_channels)  # NOTE: add camera-aware
         self.depth_conv = nn.Sequential(
             BasicBlock(mid_channels, mid_channels),
             BasicBlock(mid_channels, mid_channels),
@@ -199,12 +246,17 @@ class DepthNet(nn.Module):
                 groups=4,
                 im2col_step=128,
             )),
-            nn.Conv2d(mid_channels,
-                      depth_channels+height_channels,
-                      kernel_size=1,
-                      stride=1,
-                      padding=0),
         )
+        self.depth_layer = nn.Conv2d(mid_channels,
+                                depth_channels,
+                                kernel_size=1,
+                                stride=1,
+                                padding=0)
+        self.height_layer = nn.Conv2d(mid_channels,
+                                height_channels,
+                                kernel_size=1,
+                                stride=1,
+                                padding=0)
 
     def forward(self, x, mats_dict):
         intrins = mats_dict['intrin_mats'][:, 0:1, ..., :3, :3]
@@ -245,10 +297,14 @@ class DepthNet(nn.Module):
         context_se = self.context_mlp(mlp_input)[..., None, None]
         context = self.context_se(x, context_se)
         context = self.context_conv(context)
+        
         depth_se = self.depth_mlp(mlp_input)[..., None, None]
         depth = self.depth_se(x, depth_se)
         depth = self.depth_conv(depth)
-        return torch.cat([depth, context], dim=1)
+        
+        height = self.height_layer(depth)
+        depth = self.depth_layer(depth)
+        return torch.cat([depth, height, context], dim=1)
 
 
 class LSSFPN(nn.Module):
@@ -282,17 +338,10 @@ class LSSFPN(nn.Module):
 
         if self.is_fusion:
             self.depth_fusion = TemporalSelfAttention(embed_dims=output_channels, num_heads=8, num_levels=1)
-            self.height_fusion = TemporalSelfAttention(embed_dims=output_channels, num_heads=8, num_levels=1)
             positional_encoding=dict(type='SinePositionalEncoding', num_feats=40, normalize=True)
-            '''
-            positional_encoding=dict(
-                type='LearnedPositionalEncoding',
-                num_feats=output_channels//2,
-                row_num_embed=128,
-                col_num_embed=128,
-                )
-            '''
             self.positional_encoding = build_positional_encoding(positional_encoding)
+
+            # self.spatial_att = SpatialAttention()
 
         self.register_buffer(
             'voxel_size',
@@ -629,25 +678,19 @@ class LSSFPN(nn.Module):
             hybird_ref_2d = torch.stack([shift_ref_2d, ref_2d], 1).reshape(
                     batch_size*2, len_bev, 1, 2)
             
-            query = nn.Parameter(torch.randn((depth_embed.shape[0], depth_embed.shape[1], depth_embed.shape[2]), device=device, dtype=dtype))
-            output = self.depth_fusion(query, depth_embed, depth_embed, 
+            output = self.depth_fusion(depth_embed, height_embed, height_embed, 
                                        query_pos=bev_pos, 
                                        key_pos=bev_pos,
                                        reference_points=hybird_ref_2d,
                                        spatial_shapes=torch.tensor(
-                                            [[bev_h, bev_w]], device=query.device),
-                                       level_start_index=torch.tensor([0], device=query.device)
+                                            [[bev_h, bev_w]], device=depth_embed.device),
+                                       level_start_index=torch.tensor([0], device=depth_embed.device)
             )
-
-            output = self.height_fusion(output, height_embed, height_embed, 
-                                        query_pos=bev_pos, 
-                                        key_pos=bev_pos,
-                                        reference_points=hybird_ref_2d,
-                                        spatial_shapes=torch.tensor(
-                                            [[bev_h, bev_w]], device=query.device),
-                                        level_start_index=torch.tensor([0], device=query.device)
-            )
+            
             feature_map = output.permute(0, 2, 1).contiguous().view(batch_size, channels, bev_h, bev_w)
+            # attn_weight = self.spatial_att(feature_map)
+            # feature_map = feature_map_depth + feature_map * attn_weight
+            # feature_map = feature_map_depth + feature_map
         else:
             feature_map = feature_map_depth + feature_map_height            
         if is_return_depth:

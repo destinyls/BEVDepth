@@ -119,6 +119,7 @@ class TemporalSelfAttention(BaseModule):
         constant_init(self.attention_weights, val=0., bias=0.)
         xavier_init(self.value_proj, distribution='uniform', bias=0.)
         xavier_init(self.output_proj, distribution='uniform', bias=0.)
+
         self._is_init = True
 
     def forward(self,
@@ -258,10 +259,9 @@ class TemporalSelfAttention(BaseModule):
 
         # (num_query, embed_dims, bs)-> (bs, num_query, embed_dims)
         output = output.permute(2, 0, 1)
-
         output = self.output_proj(output)
 
         if not self.batch_first:
             output = output.permute(1, 0, 2)
-
-        return self.dropout(output) + identity
+        output = self.dropout(output) + identity
+        return output
