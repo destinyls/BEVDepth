@@ -285,6 +285,10 @@ class LSSFPN(nn.Module):
             positional_encoding=dict(type='SinePositionalEncoding', num_feats=40, normalize=True)
             self.positional_encoding = build_positional_encoding(positional_encoding)
 
+            self.cross_attn = nn.MultiheadAttention(output_channels, 8, dropout=0.01, batch_first=True)
+            self.dropout = nn.Dropout(0.01)
+            self.norm_depth = nn.LayerNorm(output_channels)
+
         self.register_buffer(
             'voxel_size',
             torch.Tensor([row[2] for row in [x_bound, y_bound, z_bound]]))
@@ -498,6 +502,10 @@ class LSSFPN(nn.Module):
     def _forward_voxel_net(self, img_feat_with_depth):
         return img_feat_with_depth
 
+    @staticmethod
+    def with_pos_embed(tensor, pos):
+        return tensor if pos is None else tensor + pos
+
     def _forward_single_sweep(self,
                               sweep_index,
                               sweep_imgs,
@@ -587,16 +595,33 @@ class LSSFPN(nn.Module):
             is_depth=False
         )
 
-        img_feat_with_depth = img_feat_with_depth.permute(0, 1, 3, 4, 5, 2)
-        img_feat_with_height = img_feat_with_height.permute(0, 1, 3, 4, 5, 2)
+        img_feat_depth = img_feat_with_depth.permute(0, 1, 4, 5, 3, 2).contiguous()
+        img_feat_height = img_feat_with_height.permute(0, 1, 4, 5, 3, 2).contiguous()
+        f_h, f_w = img_feat_depth.shape[2], img_feat_depth.shape[3]
+        img_feat_depth = img_feat_depth.view(-1, img_feat_depth.shape[-2], img_feat_depth.shape[-1])
+        img_feat_height = img_feat_height.view(-1, img_feat_height.shape[-2], img_feat_height.shape[-1])
+        # q = k = self.with_pos_embed(tgt, query_pos)
+        q = img_feat_depth
+        k = v = img_feat_height
+        output, _ = self.cross_attn(q, k, v)
+        output = img_feat_depth + self.dropout(output)        
+        output = self.norm_depth(output)
+        output = output.view(batch_size, num_cams, f_h, f_w, img_feat_depth.shape[-2], img_feat_depth.shape[-1])
+        img_feat_with_depth = output.permute(0, 1, 4, 2, 3, 5)
+
+        # img_feat_with_depth = img_feat_with_depth.permute(0, 1, 3, 4, 5, 2)
+        # img_feat_with_height = img_feat_with_height.permute(0, 1, 3, 4, 5, 2)
+
         geom_xyz_depth = ((geom_xyz_depth - (self.voxel_coord - self.voxel_size / 2.0)) /
                     self.voxel_size).int()
         geom_xyz_height = ((geom_xyz_height - (self.voxel_coord - self.voxel_size / 2.0)) /
                     self.voxel_size).int()
         feature_map_depth = voxel_pooling(geom_xyz_depth, img_feat_with_depth.contiguous(),
                                     self.voxel_num.cuda())
+        '''
         feature_map_height = voxel_pooling(geom_xyz_height, img_feat_with_height.contiguous(),
                                     self.voxel_num.cuda())
+        '''
         depth_pred = depth.view(batch_size, num_cams, depth.shape[1], depth.shape[2], depth.shape[3]).permute(0,1,3,4,2)
         height_pred = height.view(batch_size, num_cams, height.shape[1], height.shape[2], height.shape[3]).permute(0,1,3,4,2)
         heigth_template = geom_xyz_height[:,:,:,:,:,2].permute(0,1,3,4,2)
@@ -604,7 +629,7 @@ class LSSFPN(nn.Module):
         depth_pred = torch.sum(depth_pred * depth_template, dim=-1)
         height_pred = torch.sum(height_pred * heigth_template, dim=-1)
 
-        if self.is_fusion:
+        if self.is_fusion and False:
             device, dtype = feature_map_depth.device, feature_map_depth.dtype
             channels, bev_h, bev_w = feature_map_depth.shape[1], feature_map_depth.shape[2], feature_map_depth.shape[3]
             bev_mask = torch.zeros((batch_size, bev_h, bev_w), device=device).to(dtype)
@@ -631,7 +656,7 @@ class LSSFPN(nn.Module):
             
             feature_map = output.permute(0, 2, 1).contiguous().view(batch_size, channels, bev_h, bev_w)
         else:
-            feature_map = feature_map_depth + feature_map_height            
+            feature_map = feature_map_depth            
         if is_return_depth:
             return [feature_map.contiguous(), depth_pred, height_pred], depth
         return [feature_map.contiguous(), depth_pred, height_pred]
