@@ -3,27 +3,27 @@ import torch
 from torch import nn
 
 from layers.backbones.lss_fpn import LSSFPN
-from layers.heads.bev_depth_head import BEVDepthHead
+from layers.heads.bev_height_head import BEVHeightHead
 
-__all__ = ['BEVDepth']
+__all__ = ['BEVHeight']
 
 
-class BEVDepth(nn.Module):
-    """Source code of `BEVDepth`, `https://arxiv.org/abs/2112.11790`.
+class BEVHeight(nn.Module):
+    """Source code of `BEVHeight`, `https://arxiv.org/abs/2112.11790`.
 
     Args:
         backbone_conf (dict): Config of backbone.
         head_conf (dict): Config of head.
-        is_train_depth (bool): Whether to return depth.
+        is_train_height (bool): Whether to return height.
             Default: False.
     """
 
     # TODO: Reduce grid_conf and data_aug_conf
-    def __init__(self, backbone_conf, head_conf, is_train_depth=False):
-        super(BEVDepth, self).__init__()
+    def __init__(self, backbone_conf, head_conf, is_train_height=False):
+        super(BEVHeight, self).__init__()
         self.backbone = LSSFPN(**backbone_conf)
-        self.head = BEVDepthHead(**head_conf)
-        self.is_train_depth = is_train_depth
+        self.head = BEVHeightHead(**head_conf)
+        self.is_train_height = is_train_height
 
     def forward(
         self,
@@ -31,7 +31,7 @@ class BEVDepth(nn.Module):
         mats_dict,
         timestamps=None,
     ):
-        """Forward function for BEVDepth
+        """Forward function for BEVHeight
 
         Args:
             x (Tensor): Input ferature map.
@@ -54,17 +54,17 @@ class BEVDepth(nn.Module):
         Returns:
             tuple(list[dict]): Output results for tasks.
         """
-        if self.is_train_depth and self.training:
-            x, depth_pred = self.backbone(x,
+        if self.is_train_height and self.training:
+            x, height_pred = self.backbone(x,
                                           mats_dict,
                                           timestamps,
-                                          is_return_depth=True)
+                                          is_return_height=True)
             preds = self.head(x)
-            return preds, depth_pred
+            return preds, height_pred
         else:
             x = self.backbone(x, mats_dict, timestamps)
             # demo_f = torch.sum(x[0], dim=0)
-            # cv2.imwrite("/root/BEVDepth/demo.jpg", demo_f.detach().cpu().numpy()*2550)
+            # cv2.imwrite("/root/BEVHeight/demo.jpg", demo_f.detach().cpu().numpy()*2550)
             preds = self.head(x)
             return preds
 
@@ -89,7 +89,7 @@ class BEVDepth(nn.Module):
         return self.head.get_targets(gt_boxes, gt_labels)
 
     def loss(self, targets, preds_dicts):
-        """Loss function for BEVDepth.
+        """Loss function for BEVHeight.
 
         Args:
             gt_bboxes_3d (list[:obj:`LiDARInstance3DBoxes`]): Ground

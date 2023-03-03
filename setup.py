@@ -43,11 +43,11 @@ def make_cuda_ext(name,
 
 
 setup(
-    name='BEVDepth',
+    name='BEVHeight',
     version='0.0.1',
-    author='Megvii',
-    author_email='liyinhao@megvii.com',
-    description='Code for BEVDepth',
+    author='Alibaba Group',
+    author_email='yanglei20@mails.tsinghua.edu.cn',
+    description='Code for BEVHeight',
     long_description=long_description,
     long_description_content_type='text/markdown',
     url=None,

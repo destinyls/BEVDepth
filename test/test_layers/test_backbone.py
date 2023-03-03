@@ -32,7 +32,7 @@ class TestLSSFPN(unittest.TestCase):
                 upsample_strides=[0.25, 0.5, 1, 2],
                 out_channels=[16, 16, 16, 16],
             ),
-            'depth_net_conf':
+            'height_net_conf':
             dict(in_channels=64, mid_channels=64),
         }
         self.lss_fpn = LSSFPN(**backbone_conf).cuda()

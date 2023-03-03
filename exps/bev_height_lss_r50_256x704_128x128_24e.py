@@ -19,7 +19,7 @@ from torch.optim.lr_scheduler import MultiStepLR
 
 from dataset.nusc_mv_det_dataset import NuscMVDetDataset, collate_fn
 from evaluators.det_mv_evaluators import DetMVNuscEvaluator
-from models.bev_depth import BEVDepth
+from models.bev_height import BEVHeight
 from utils.torch_dist import all_gather_object, get_rank, synchronize
 from utils.backup_files import backup_codebase
 
@@ -41,7 +41,6 @@ backbone_conf = {
     'x_bound': [0, 102.4, 0.4],
     'y_bound': [-51.2, 51.2, 0.4],
     'z_bound': [-5, 3, 8],
-     # 'd_bound': [-3.0, 5.0, 0.1],
     'd_bound': [-2.0, 0.0, 180],
     'final_dim':
     final_dim,
@@ -65,7 +64,7 @@ backbone_conf = {
         upsample_strides=[0.25, 0.5, 1, 2],
         out_channels=[128, 128, 128, 128],
     ),
-    'depth_net_conf':
+    'height_net_conf':
     dict(in_channels=512, mid_channels=512)
 }
 ida_aug_conf = {
@@ -189,7 +188,7 @@ head_conf = {
 }
 
 
-class BEVDepthLightningModel(LightningModule):
+class BEVHeightLightningModel(LightningModule):
     MODEL_NAMES = sorted(name for name in models.__dict__
                          if name.islower() and not name.startswith('__')
                          and callable(models.__dict__[name]))
@@ -222,9 +221,9 @@ class BEVDepthLightningModel(LightningModule):
         self.default_root_dir = default_root_dir
         self.evaluator = DetMVNuscEvaluator(class_names=self.class_names,
                                             output_dir=self.default_root_dir)
-        self.model = BEVDepth(self.backbone_conf,
+        self.model = BEVHeight(self.backbone_conf,
                               self.head_conf,
-                              is_train_depth=False)
+                              is_train_height=False)
         self.mode = 'valid'
         self.img_conf = img_conf
         self.data_use_cbgs = False
@@ -235,7 +234,7 @@ class BEVDepthLightningModel(LightningModule):
         self.up_stride = 8
         self.downsample_factor = self.backbone_conf['downsample_factor'] // self.up_stride
         self.dbound = self.backbone_conf['d_bound']
-        self.depth_channels = int(self.dbound[2])
+        self.height_channels = int(self.dbound[2])
 
     def forward(self, sweep_imgs, mats):
         return self.model(sweep_imgs, mats)
@@ -277,7 +276,7 @@ class BEVDepthLightningModel(LightningModule):
     def get_depth_loss(self, depth_labels, depth_preds):
         depth_labels = self.get_downsampled_gt_depth(depth_labels)
         depth_preds = depth_preds.permute(0, 2, 3, 1).contiguous().view(
-            -1, self.depth_channels)
+            -1, self.height_channels)
         fg_mask = torch.max(depth_labels, dim=1).values > 0.0
 
         with autocast(enabled=False):
@@ -323,13 +322,13 @@ class BEVDepthLightningModel(LightningModule):
         gt_depths = gt_depths + 1
         
         gt_depths = torch.where(
-            (gt_depths < self.depth_channels + 1) & (gt_depths >= 0.0),
+            (gt_depths < self.height_channels + 1) & (gt_depths >= 0.0),
             gt_depths, torch.zeros_like(gt_depths))
         _, H, W = gt_depths.shape
         gt_depths = gt_depths[:, 0:H:self.up_stride, 0:W:self.up_stride]
         gt_depths = F.one_hot(gt_depths.long(),
-                              num_classes=self.depth_channels + 1).view(
-                                  -1, self.depth_channels + 1)[:, 1:]
+                              num_classes=self.height_channels + 1).view(
+                                  -1, self.height_channels + 1)[:, 1:]
 
         return gt_depths.float()
 
@@ -466,8 +465,8 @@ def main(args: Namespace) -> None:
         pl.seed_everything(args.seed)
     print(args)
     
-    model = BEVDepthLightningModel(**vars(args))
-    checkpoint_callback = ModelCheckpoint(dirpath='./outputs/bev_depth_lss_r50_256x704_128x128_24e/checkpoints', filename='{epoch}', every_n_epochs=10, save_last=True, save_top_k=-1)
+    model = BEVHeightLightningModel(**vars(args))
+    checkpoint_callback = ModelCheckpoint(dirpath='./outputs/bev_height_lss_r50_256x704_128x128_24e/checkpoints', filename='{epoch}', every_n_epochs=10, save_last=True, save_top_k=-1)
     trainer = pl.Trainer.from_argparse_args(args, callbacks=[checkpoint_callback])
     if args.evaluate:
         for ckpt_name in os.listdir(args.ckpt_path):
@@ -491,7 +490,7 @@ def run_cli():
                                default=0,
                                help='seed for initializing training.')
     parent_parser.add_argument('--ckpt_path', type=str)
-    parser = BEVDepthLightningModel.add_model_specific_args(parent_parser)
+    parser = BEVHeightLightningModel.add_model_specific_args(parent_parser)
     parser.set_defaults(
         profiler='simple',
         deterministic=False,
@@ -502,7 +501,7 @@ def run_cli():
         limit_val_batches=0,
         enable_checkpointing=True,
         precision=32,
-        default_root_dir='./outputs/bev_depth_lss_r50_256x704_128x128_24e')
+        default_root_dir='./outputs/bev_height_lss_r50_256x704_128x128_24e')
     args = parser.parse_args()
     main(args)
 

@@ -8,7 +8,7 @@ from mmdet.models import build_backbone
 from mmdet3d.models import build_neck
 from torch.cuda.amp import autocast
 
-__all__ = ['BEVDepthHead']
+__all__ = ['BEVHeightHead']
 
 bev_backbone_conf = dict(
     type='ResNet',
@@ -28,7 +28,7 @@ bev_neck_conf = dict(type='SECONDFPN',
                      out_channels=[64, 64, 128])
 
 
-class BEVDepthHead(CenterHead):
+class BEVHeightHead(CenterHead):
     """Head for BevDepth.
 
     Args:
@@ -63,7 +63,7 @@ class BEVDepthHead(CenterHead):
                            init_bias=-2.19,
                            final_kernel=3),
     ):
-        super(BEVDepthHead, self).__init__(
+        super(BEVHeightHead, self).__init__(
             in_channels=in_channels,
             tasks=tasks,
             bbox_coder=bbox_coder,
@@ -253,7 +253,7 @@ class BEVDepthHead(CenterHead):
         return heatmaps, anno_boxes, inds, masks
 
     def loss(self, targets, preds_dicts, **kwargs):
-        """Loss function for BEVDepthHead.
+        """Loss function for BEVHeightHead.
 
         Args:
             gt_bboxes_3d (list[:obj:`LiDARInstance3DBoxes`]): Ground
