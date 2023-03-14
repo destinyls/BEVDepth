@@ -9,17 +9,20 @@ from mmcv.ops.multi_scale_deform_attn import multi_scale_deformable_attn_pytorch
 import warnings
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+
 from mmcv.cnn import xavier_init, constant_init
-from mmcv.cnn.bricks.registry import ATTENTION
 import math
+import copy
 from mmcv.runner.base_module import BaseModule
+from mmcv.cnn.bricks.transformer import build_positional_encoding
 
 from mmcv.utils import ext_loader
 ext_module = ext_loader.load_ext(
     '_ext', ['ms_deform_attn_backward', 'ms_deform_attn_forward'])
 
 
-class TemporalSelfAttention(BaseModule):
+class DeformAttention(BaseModule):
     """An attention module used in BEVFormer based on Deformable-Detr.
 
     `Deformable DETR: Deformable Transformers for End-to-End Object Detection.
@@ -98,6 +101,8 @@ class TemporalSelfAttention(BaseModule):
                                            num_bev_queue*num_heads * num_levels * num_points)
         self.value_proj = nn.Linear(embed_dims, embed_dims)
         self.output_proj = nn.Linear(embed_dims, embed_dims)
+        self.norm = nn.LayerNorm(embed_dims)
+
         self.init_weights()
 
     def init_weights(self):
@@ -263,5 +268,120 @@ class TemporalSelfAttention(BaseModule):
 
         if not self.batch_first:
             output = output.permute(1, 0, 2)
-        output = self.dropout(output) + identity
+        output = self.norm(self.dropout(output) + identity)
         return output
+
+def _get_clones(module, N):
+    return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
+
+def _get_activation_fn(activation):
+    """Return an activation function given a string"""
+    if activation == "relu":
+        return F.relu
+    if activation == "gelu":
+        return F.gelu
+    if activation == "glu":
+        return F.glu
+    raise RuntimeError(F"activation should be relu/gelu, not {activation}.")
+
+class DHFusionLayer(nn.Module):
+    def __init__(self, channels, num_heads=8, num_levels=1, d_ffn=256, activation="relu", dropout=0.1):
+        super().__init__()
+        self.cross_attn = DeformAttention(embed_dims=channels, num_heads=num_heads, num_levels=num_levels)
+
+        # ffn
+        self.linear1 = nn.Linear(channels, d_ffn)
+        self.linear2 = nn.Linear(d_ffn, channels)
+        self.activation = _get_activation_fn(activation)
+        self.dropout = nn.Dropout(dropout)
+        self.norm = nn.LayerNorm(channels)
+
+    def forward_ffn(self, src):
+        src2 = self.linear2(self.activation(self.linear1(src)))
+        src = src + self.dropout(src2)
+        src = self.norm(src)
+        return src
+
+    def forward(self, depth_embed, height_embed, bev_pos, reference_points, spatial_shapes):
+        depth_embed = self.cross_attn(depth_embed, height_embed, height_embed, 
+                                        query_pos=bev_pos, 
+                                        key_pos=bev_pos,
+                                        reference_points=reference_points,
+                                        spatial_shapes=spatial_shapes,
+                                        level_start_index=torch.tensor([0], device=depth_embed.device))
+        depth_embed = self.forward_ffn(depth_embed)
+        return depth_embed
+
+
+class DHFusion(nn.Module):
+    def __init__(self, channels, num_heads=8, num_levels=1, num_layers=3):
+        super().__init__()
+        self.num_layers = num_layers
+        fusion_layer = DHFusionLayer(channels=channels, num_heads=num_heads, num_levels=num_levels)
+        self.fusion_layers = _get_clones(fusion_layer, num_layers)
+
+        positional_encoding=dict(type='SinePositionalEncoding', num_feats=40, normalize=True)
+        self.positional_encoding = build_positional_encoding(positional_encoding)
+
+    @staticmethod
+    def get_reference_points(H, W, Z=8, num_points_in_pillar=4, dim='3d', bs=1, device='cuda', dtype=torch.float):
+        """Get the reference points used in SCA and TSA.
+        Args:
+            H, W: spatial shape of bev.
+            Z: hight of pillar.
+            D: sample D points uniformly from each pillar.
+            device (obj:`device`): The device where
+                reference_points should be.
+        Returns:
+            Tensor: reference points used in decoder, has \
+                shape (bs, num_keys, num_levels, 2).
+        """
+        # reference points in 3D space, used in spatial cross-attention (SCA)
+        if dim == '3d':
+            zs = torch.linspace(0.5, Z - 0.5, num_points_in_pillar, dtype=dtype,
+                                device=device).view(-1, 1, 1).expand(num_points_in_pillar, H, W) / Z
+            xs = torch.linspace(0.5, W - 0.5, W, dtype=dtype,
+                                device=device).view(1, 1, W).expand(num_points_in_pillar, H, W) / W
+            ys = torch.linspace(0.5, H - 0.5, H, dtype=dtype,
+                                device=device).view(1, H, 1).expand(num_points_in_pillar, H, W) / H
+            ref_3d = torch.stack((xs, ys, zs), -1)
+            ref_3d = ref_3d.permute(0, 3, 1, 2).flatten(2).permute(0, 2, 1)
+            ref_3d = ref_3d[None].repeat(bs, 1, 1, 1)
+            return ref_3d
+        # reference points on 2D bev plane, used in temporal self-attention (TSA).
+        elif dim == '2d':
+            ref_y, ref_x = torch.meshgrid(
+                torch.linspace(
+                    0.5, H - 0.5, H, dtype=dtype, device=device),
+                torch.linspace(
+                    0.5, W - 0.5, W, dtype=dtype, device=device)
+            )
+            ref_y = ref_y.reshape(-1)[None] / H
+            ref_x = ref_x.reshape(-1)[None] / W
+            ref_2d = torch.stack((ref_x, ref_y), -1)
+            ref_2d = ref_2d.repeat(bs, 1, 1).unsqueeze(2)
+            return ref_2d
+
+    def forward(self, feature_map_depth, feature_map_height):
+        device, dtype = feature_map_depth.device, feature_map_depth.dtype
+        batch_size, channels, bev_h, bev_w = feature_map_depth.shape[0], feature_map_depth.shape[1], feature_map_depth.shape[2], feature_map_depth.shape[3]
+        bev_mask = torch.zeros((batch_size, bev_h, bev_w), device=device).to(dtype)
+        bev_pos = self.positional_encoding(bev_mask).to(dtype)
+        bev_pos = bev_pos.permute(0, 2, 3, 1).reshape(batch_size, -1, channels).contiguous()
+        depth_embed = feature_map_depth.permute(0, 2, 3, 1).reshape(batch_size, -1, channels).contiguous()
+        height_embed = feature_map_height.permute(0, 2, 3, 1).reshape(batch_size, -1, channels).contiguous()
+        ref_2d = self.get_reference_points(
+            bev_h, bev_w, dim='2d', bs=batch_size, device=device, dtype=dtype)
+        _, len_bev, _, _ = ref_2d.shape
+        shift_ref_2d = ref_2d
+        hybird_ref_2d = torch.stack([shift_ref_2d, ref_2d], 1).reshape(batch_size*2, len_bev, 1, 2)
+
+        output = depth_embed
+        for lid, layer in enumerate(self.fusion_layers):
+            output = layer(output, height_embed, 
+                           bev_pos=bev_pos, 
+                           reference_points=hybird_ref_2d,
+                           spatial_shapes=torch.tensor(
+                                [[bev_h, bev_w]], device=depth_embed.device))
+        feature_map = output.permute(0, 2, 1).contiguous().view(batch_size, channels, bev_h, bev_w)
+        return feature_map
