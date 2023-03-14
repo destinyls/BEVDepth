@@ -208,8 +208,9 @@ class DepthLayer(nn.Module):
 
 class DepthNet(nn.Module):
     def __init__(self, in_channels, mid_channels, context_channels,
-                 depth_channels, height_channels):
+                 depth_channels, height_channels, frozen_layers, is_fusion):
         super(DepthNet, self).__init__()
+        self.is_fusion = is_fusion
         self.reduce_conv = nn.Sequential(
             nn.Conv2d(in_channels,
                       mid_channels,
@@ -227,36 +228,15 @@ class DepthNet(nn.Module):
         self.bn = nn.BatchNorm1d(27)
         self.context_mlp = Mlp(27, mid_channels, mid_channels)
         self.context_se = SELayer(mid_channels)  # NOTE: add camera-aware
+        self.depth_layer = DepthLayer(mid_channels, depth_channels)
+        if frozen_layers:
+            self.frozen_layers()
+        if is_fusion:
+            self.height_layer = DepthLayer(mid_channels, height_channels)
 
-        # self.depth_layer = DepthLayer(mid_channels, depth_channels + height_channels)
-        # self.height_layer = DepthLayer(mid_channels, height_channels)
-        self.depth_mlp = Mlp(27, mid_channels, mid_channels)
-        self.depth_se = SELayer(mid_channels)  # NOTE: add camera-aware
-        self.depth_conv = nn.Sequential(
-            BasicBlock(mid_channels, mid_channels),
-            BasicBlock(mid_channels, mid_channels),
-            BasicBlock(mid_channels, mid_channels),
-            ASPP(mid_channels, mid_channels),
-            build_conv_layer(cfg=dict(
-                type='DCN',
-                in_channels=mid_channels,
-                out_channels=mid_channels,
-                kernel_size=3,
-                padding=1,
-                groups=4,
-                im2col_step=128,
-            )),
-        )
-        self.depth_layer = nn.Conv2d(mid_channels,
-                                depth_channels,
-                                kernel_size=1,
-                                stride=1,
-                                padding=0)
-        self.height_layer = nn.Conv2d(mid_channels,
-                                height_channels,
-                                kernel_size=1,
-                                stride=1,
-                                padding=0)
+    def frozen_layers(self,):
+        for p in self.parameters():
+            p.requires_grad = False
 
     def forward(self, x, mats_dict):
         intrins = mats_dict['intrin_mats'][:, 0:1, ..., :3, :3]
@@ -297,20 +277,18 @@ class DepthNet(nn.Module):
         context_se = self.context_mlp(mlp_input)[..., None, None]
         context = self.context_se(x, context_se)
         context = self.context_conv(context)
-        
-        depth_se = self.depth_mlp(mlp_input)[..., None, None]
-        depth = self.depth_se(x, depth_se)
-        depth = self.depth_conv(depth)
-        
-        height = self.height_layer(depth)
-        depth = self.depth_layer(depth)
-        return torch.cat([depth, height, context], dim=1)
 
+        depth = self.depth_layer(x, mlp_input)
+        if self.is_fusion:
+            height = self.height_layer(x, mlp_input)
+            return torch.cat([depth, height, context], dim=1)
+        else:
+            return torch.cat([depth, context], dim=1)
 
 class LSSFPN(nn.Module):
     def __init__(self, x_bound, y_bound, z_bound, d_bound, h_bound, final_dim,
                  downsample_factor, output_channels, img_backbone_conf,
-                 img_neck_conf, depth_net_conf):
+                 img_neck_conf, depth_net_conf, frozen_layers, is_fusion):
         """Modified from `https://github.com/nv-tlabs/lift-splat-shoot`.
 
         Args:
@@ -334,14 +312,12 @@ class LSSFPN(nn.Module):
         self.h_bound = h_bound
         self.final_dim = final_dim
         self.output_channels = output_channels
-        self.is_fusion = True
+        self.is_fusion = is_fusion
 
         if self.is_fusion:
             self.depth_fusion = TemporalSelfAttention(embed_dims=output_channels, num_heads=8, num_levels=1)
             positional_encoding=dict(type='SinePositionalEncoding', num_feats=40, normalize=True)
             self.positional_encoding = build_positional_encoding(positional_encoding)
-
-            # self.spatial_att = SpatialAttention()
 
         self.register_buffer(
             'voxel_size',
@@ -363,10 +339,17 @@ class LSSFPN(nn.Module):
 
         self.img_backbone = build_backbone(img_backbone_conf)
         self.img_neck = build_neck(img_neck_conf)
+        if frozen_layers:
+            self.frozen_layers()
+
         self.depth_net = self._configure_depth_net(depth_net_conf)
 
         self.img_neck.init_weights()
         self.img_backbone.init_weights()
+
+    def frozen_layers(self,):
+        for p in self.parameters():
+            p.requires_grad = False
 
     def _configure_depth_net(self, depth_net_conf):
         return DepthNet(
@@ -375,6 +358,8 @@ class LSSFPN(nn.Module):
             self.output_channels,
             self.depth_channels,
             self.height_channels,
+            depth_net_conf['frozen_layers'],
+            depth_net_conf['is_fusion']
         )
     
     @staticmethod
@@ -428,38 +413,12 @@ class LSSFPN(nn.Module):
                                                             1).expand(-1, fH, fW)
         else:
             # DID
-            alpha = 1.0
-            num_bins = self.h_bound[2]
-            hmean, hlen = (self.h_bound[0] + self.h_bound[1]) / 2.0, (self.h_bound[1] - self.h_bound[0]) / 2.0
-            d_coords = np.arange(-1 * num_bins//2, num_bins//2, 1) / (num_bins//2)    
-            flag = np.sign(d_coords)
-            d_coords = np.power(np.abs(d_coords), alpha) * flag
-            d_coords = d_coords * hlen + hmean
+            alpha = 1.5
+            d_coords = np.arange(self.h_bound[2]) / self.h_bound[2]
+            d_coords = np.power(d_coords, alpha)
+            d_coords = self.h_bound[0] + d_coords * (self.h_bound[1] - self.h_bound[0])
             d_coords = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
 
-        # height LID style
-        '''
-        min_height, min_num = 0.5, 40
-        lid_num = self.d_bound[2] - 2 * min_num
-        range_num1 = int(lid_num * abs(self.d_bound[0]) / (self.d_bound[1] - self.d_bound[0]))
-        range_num2 = lid_num - range_num1
-
-        delta = 2 * (abs(self.d_bound[0]) - min_height) / (range_num1 * (1 + range_num1))
-        d_coords1 = ((np.arange(range_num1) + 0.5) * 2)**2
-        d_coords1 = (d_coords1 - 1) * delta / 8 + min_height
-        d_coords1 = -1 * np.flipud(d_coords1)
-
-        delta = 2 * (abs(self.d_bound[1]) - min_height) / (range_num2 * (1 + range_num2))
-        d_coords2 = ((np.arange(range_num2) + 0.5) * 2)**2
-        d_coords2 = (d_coords2 - 1) * delta / 8 + min_height
-
-        mid_coords1 = (np.arange(min_num) * min_height / min_num)
-        mid_coords1 = -1 * np.flipud(mid_coords1)
-        mid_coords2 = (np.arange(min_num) * min_height / min_num)
-        mid_coords1[-1], mid_coords2[0] = mid_coords1[-2] / 2, mid_coords2[1] / 2
-        d_coords = np.concatenate([d_coords1, mid_coords1, mid_coords2, d_coords2], axis=0)
-        d_coords = torch.tensor(d_coords, dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
-        '''
         D, _, _ = d_coords.shape
         x_coords = torch.linspace(0, ogfW - 1, fW, dtype=torch.float).view(
             1, 1, fW).expand(D, fH, fW)
@@ -596,10 +555,12 @@ class LSSFPN(nn.Module):
                                     source_features.shape[4]),
             mats_dict,
         )
-        geo_channels = self.depth_channels + self.height_channels
+        if self.is_fusion:
+            geo_channels = self.depth_channels + self.height_channels
+        else:
+            geo_channels = self.depth_channels
+        
         depth = depth_feature[:, :self.depth_channels].softmax(1)
-        height = depth_feature[:, self.depth_channels:geo_channels].softmax(1)
-
         img_feat_with_depth = depth.unsqueeze(
             1) * depth_feature[:, geo_channels:(
                 geo_channels + self.output_channels)].unsqueeze(2)
@@ -612,20 +573,6 @@ class LSSFPN(nn.Module):
             img_feat_with_depth.shape[3],
             img_feat_with_depth.shape[4],
         )
-
-        img_feat_with_height = height.unsqueeze(
-            1) * depth_feature[:, geo_channels:(
-                geo_channels + self.output_channels)].unsqueeze(2)
-        img_feat_with_height = self._forward_voxel_net(img_feat_with_height)
-        img_feat_with_height = img_feat_with_height.reshape(
-            batch_size,
-            num_cams,
-            img_feat_with_height.shape[1],
-            img_feat_with_height.shape[2],
-            img_feat_with_height.shape[3],
-            img_feat_with_height.shape[4],
-        )
-
         geom_xyz_depth = self.get_geometry(
             mats_dict['sensor2ego_mats'][:, sweep_index, ...],
             mats_dict['sensor2virtual_mats'][:, sweep_index, ...],
@@ -635,32 +582,47 @@ class LSSFPN(nn.Module):
             mats_dict.get('bda_mat', None),
             is_depth=True,
         )
-        geom_xyz_height = self.get_geometry(
-            mats_dict['sensor2ego_mats'][:, sweep_index, ...],
-            mats_dict['sensor2virtual_mats'][:, sweep_index, ...],
-            mats_dict['intrin_mats'][:, sweep_index, ...],
-            mats_dict['ida_mats'][:, sweep_index, ...],
-            mats_dict['reference_heights'][:, sweep_index, ...],
-            mats_dict.get('bda_mat', None),
-            is_depth=False
-        )
-
         img_feat_with_depth = img_feat_with_depth.permute(0, 1, 3, 4, 5, 2)
-        img_feat_with_height = img_feat_with_height.permute(0, 1, 3, 4, 5, 2)
         geom_xyz_depth = ((geom_xyz_depth - (self.voxel_coord - self.voxel_size / 2.0)) /
-                    self.voxel_size).int()
-        geom_xyz_height = ((geom_xyz_height - (self.voxel_coord - self.voxel_size / 2.0)) /
-                    self.voxel_size).int()
+                            self.voxel_size).int()
         feature_map_depth = voxel_pooling(geom_xyz_depth, img_feat_with_depth.contiguous(),
                                     self.voxel_num.cuda())
-        feature_map_height = voxel_pooling(geom_xyz_height, img_feat_with_height.contiguous(),
-                                    self.voxel_num.cuda())
         depth_pred = depth.view(batch_size, num_cams, depth.shape[1], depth.shape[2], depth.shape[3]).permute(0,1,3,4,2)
-        height_pred = height.view(batch_size, num_cams, height.shape[1], height.shape[2], height.shape[3]).permute(0,1,3,4,2)
-        heigth_template = geom_xyz_height[:,:,:,:,:,2].permute(0,1,3,4,2)
         depth_template = geom_xyz_depth[:,:,:,:,:,2].permute(0,1,3,4,2)
         depth_pred = torch.sum(depth_pred * depth_template, dim=-1)
-        height_pred = torch.sum(height_pred * heigth_template, dim=-1)
+
+        if self.is_fusion:
+            geo_channels = self.depth_channels + self.height_channels
+            height = depth_feature[:, self.depth_channels:geo_channels].softmax(1)
+            img_feat_with_height = height.unsqueeze(
+                1) * depth_feature[:, geo_channels:(
+                    geo_channels + self.output_channels)].unsqueeze(2)
+            img_feat_with_height = self._forward_voxel_net(img_feat_with_height)
+            img_feat_with_height = img_feat_with_height.reshape(
+                batch_size,
+                num_cams,
+                img_feat_with_height.shape[1],
+                img_feat_with_height.shape[2],
+                img_feat_with_height.shape[3],
+                img_feat_with_height.shape[4],
+            )           
+            geom_xyz_height = self.get_geometry(
+                mats_dict['sensor2ego_mats'][:, sweep_index, ...],
+                mats_dict['sensor2virtual_mats'][:, sweep_index, ...],
+                mats_dict['intrin_mats'][:, sweep_index, ...],
+                mats_dict['ida_mats'][:, sweep_index, ...],
+                mats_dict['reference_heights'][:, sweep_index, ...],
+                mats_dict.get('bda_mat', None),
+                is_depth=False
+            )
+            img_feat_with_height = img_feat_with_height.permute(0, 1, 3, 4, 5, 2)
+            geom_xyz_height = ((geom_xyz_height - (self.voxel_coord - self.voxel_size / 2.0)) /
+                        self.voxel_size).int()
+            feature_map_height = voxel_pooling(geom_xyz_height, img_feat_with_height.contiguous(),
+                                        self.voxel_num.cuda())
+            height_pred = height.view(batch_size, num_cams, height.shape[1], height.shape[2], height.shape[3]).permute(0,1,3,4,2)
+            heigth_template = geom_xyz_height[:,:,:,:,:,2].permute(0,1,3,4,2)
+            height_pred = torch.sum(height_pred * heigth_template, dim=-1)
 
         if self.is_fusion:
             device, dtype = feature_map_depth.device, feature_map_depth.dtype
@@ -688,14 +650,14 @@ class LSSFPN(nn.Module):
             )
             
             feature_map = output.permute(0, 2, 1).contiguous().view(batch_size, channels, bev_h, bev_w)
-            # attn_weight = self.spatial_att(feature_map)
-            # feature_map = feature_map_depth + feature_map * attn_weight
-            # feature_map = feature_map_depth + feature_map
+            feature_map = [feature_map.contiguous(), depth_pred, height_pred]
+
         else:
-            feature_map = feature_map_depth + feature_map_height            
+            feature_map = feature_map_depth   
+            feature_map = [feature_map.contiguous(), depth_pred, depth_pred]        
         if is_return_depth:
-            return [feature_map.contiguous(), depth_pred, height_pred], depth
-        return [feature_map.contiguous(), depth_pred, height_pred]
+            return feature_map, depth
+        return feature_map
 
     def forward(self,
                 sweep_imgs,

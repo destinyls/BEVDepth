@@ -30,7 +30,7 @@ final_dim = (256, 704)
 img_conf = dict(img_mean=[123.675, 116.28, 103.53],
                 img_std=[58.395, 57.12, 57.375],
                 to_rgb=True)
-
+frozen_layers, is_fusion = False, False
 backbone_conf = {
     'x_bound': [-51.2, 51.2, 0.8],
     'y_bound': [-51.2, 51.2, 0.8],
@@ -62,8 +62,11 @@ backbone_conf = {
         out_channels=[128, 128, 128, 128],
     ),
     'depth_net_conf':
-    dict(in_channels=512, mid_channels=512)
+    dict(in_channels=512, mid_channels=512, frozen_layers=frozen_layers, is_fusion=is_fusion),
+    'frozen_layers': frozen_layers,
+    'is_fusion': is_fusion
 }
+
 ida_aug_conf = {
     'resize_lim': (0.386, 0.55),
     'final_dim':
@@ -393,9 +396,8 @@ class BEVDepthLightningModel(LightningModule):
     def configure_optimizers(self):
         lr = self.basic_lr_per_img * \
             self.batch_size_per_device * self.gpus
-        optimizer = torch.optim.AdamW(self.model.parameters(),
-                                      lr=lr,
-                                      weight_decay=1e-7)
+        # optimizer = torch.optim.AdamW(self.model.parameters(), lr=lr, weight_decay=1e-7)
+        optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, self.model.parameters()), lr=lr, weight_decay=1e-7)
         scheduler = MultiStepLR(optimizer, [19, 23])
         return [[optimizer], [scheduler]]
 
@@ -447,7 +449,7 @@ class BEVDepthLightningModel(LightningModule):
             batch_size=self.batch_size_per_device,
             shuffle=False,
             collate_fn=collate_fn,
-            num_workers=4,
+            num_workers=8,
             sampler=None,
         )
         return val_loader
@@ -496,7 +498,7 @@ def run_cli():
     parser.set_defaults(
         profiler='simple',
         deterministic=False,
-        max_epochs=48,
+        max_epochs=36,
         accelerator='ddp',
         num_sanity_val_steps=0,
         gradient_clip_val=5,
